@@ -1,0 +1,20 @@
+# Game files (copyrighted, supply your own copy)
+/assets/
+
+# Build output
+/sbx_recomp/out/
+
+# Codegen bookkeeping with machine-specific absolute paths.
+/sbx_recomp/generated/default/codegen.d
+/sbx_recomp/generated/default/codegen.stamp
+/sbx_recomp/generated/default/codegen.build.stamp
+
+# Ghidra / editor droppings
+*.gpr
+*.rep/
+*.lock
+*.lock~
+.vs/
+.vscode/
+__pycache__/
+rexglue-sdk

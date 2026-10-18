@@ -1,0 +1,7 @@
+# Hand-checked function matches (ITC-Recomp -> here), applied before
+# everything else by match_funcs.py. One pair per line: other build's
+# address, this build's address, note. See docs/porting-from-itc.md.
+825BA0C8	8259F788	QueryPerformanceCounter: mftb, store, return 1; this build's has no retry on a zero read (other XDK build)
+8258C998	82572530	same loads/stores, scheduled differently; only free function between matched neighbours
+8258E5F8	82574200	same as ITC with another register allocation; between matched 8258E5E0/8258E618
+8258DE50	825739E0	Thread::Start: identical but one register (lwz r10 vs r11 before mtctr)
