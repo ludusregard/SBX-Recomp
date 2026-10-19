@@ -5,9 +5,10 @@ A static recompilation of Shutoko Battle X (Xbox 360) built on ReXGlue
 `patches/rexglue-sdk/`, applied at configure time, none yet).
 `docs/functions.md` is the reference: what's known about the game's code
 (names, addresses, data) and which functions are overridden.
-`docs/codegen.md` is how the recompiled code is generated: function hints,
-the codegen loop, what was found and fixed, and the Windows build's
-gotchas. `docs/porting-from-itc.md` is how this project relates to
+`docs/game_data.md` is the game's data: the archives, how they're loaded,
+and the formats inside. `docs/codegen.md` is how the recompiled code is
+generated: function hints, the codegen loop, what was found and fixed, and
+the Windows build's gotchas. `docs/porting-from-itc.md` is how this project relates to
 ITC-Recomp (the recompilation of Import Tuner Challenge, the US release of
 the same game) and how its findings are matched to SBX's code.
 Read the relevant section before changing anything, and keep it up to
@@ -24,6 +25,9 @@ date as you learn things.
   named where the origin matters (`docs/porting-from-itc.md`).
 - Keep this repo's layout, naming and doc conventions the same as
   ITC-Recomp's, so the two projects read alike.
+- American English (color, not colour; gray, not grey) and plain,
+  straightforward wording in code, comments, docs and commit messages:
+  short and clear beats thorough and wordy.
 - Commit often. Never revert or `git checkout` uncommitted work without
   committing it first.
 - Don't create branches (local or pushed) without asking the user first;
@@ -78,6 +82,13 @@ Fixes:
 - The black screen after quest races: `sub_8218C240`, the post-race
   check, waits 1 cycle instead of 60 (`src/hooks/post_race.cpp`,
   `--post_race_check_fix`, on by default).
+
+Experiments:
+
+- The cut cars (ECLI, S30, L86, T86) are offered from the start of a new
+  game: their bits in the save's car unlock bits are set after
+  `sub_82113FB0` and `sub_82114278` (`src/hooks/unlock_cut_cars.cpp`,
+  `--unlock_cut_cars`, on by default). Their prices are still 999999.
 
 Known functions: everything listed in `docs/functions.md` was matched from
 ITC-Recomp's findings (`docs/porting-from-itc.md`).

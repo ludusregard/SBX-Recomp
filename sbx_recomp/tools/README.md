@@ -14,6 +14,8 @@ Ported from ITC-Recomp's `itc_recomp/tools/` unless noted. Run with
 | `match_pins.tsv` | yes (new) | Hand-checked matches `match_funcs.py` applies first. |
 | `port_addrs.py` | yes (new) | Ports function, code and data addresses (e.g. everything in ITC's `docs/functions.md`) using the matches. |
 | `prune.py` | yes | Drops hints implicated in "Unresolved branch" sites. |
+| `part_to_obj.py` | yes (new) | Converts part files (car models) to OBJ with materials, or a whole car block (`--car 892 --set a`, `--stock`, `--wheels 587 588`, `--textures`). See `docs/game_data.md`, "Part files". |
+| `xpr_textures.py` | yes (new) | Lists the textures in an XPR2 and decodes them to PNG (DXT1/3/5, A8R8G8B8, tiled). |
 | `pfm_to_png.py`, `rainbow_draws.py` | later | Read ITC's native renderer dumps; need that renderer ported. |
 | `read_capture.py` | later | Reads `--capture_dir` state captures (ITC's `src/debug/state_capture.cpp`). |
 | `profile_render_thread.sh` | later, Linux | `perf` profile of the render thread. |

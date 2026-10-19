@@ -13,7 +13,7 @@ compares those, with addresses and large immediates masked, in passes:
   2. calls:  for two matched functions whose call lists have the same length,
              callees in the same position are paired when their masked code
              is similar enough (repeated until nothing changes).
-  3. order:  an unmatched function lying between two matched neighbours on
+  3. order:  an unmatched function lying between two matched neighbors on
              both sides, compared with the candidates between them.
   3b. gap:   exactly one unmatched function on each side between adjacent
              matches, with a similar mix of instructions.
@@ -215,7 +215,7 @@ def main():
                     changed = True
     print(f'after calls: {len(match)}', file=sys.stderr)
 
-    # 3. order: between matched neighbours
+    # 3. order: between matched neighbors
     for _ in range(3):
         anchors = sorted((s, d) for s, (d, _, _) in match.items())
         a_src = [s for s, _ in anchors]
@@ -294,7 +294,7 @@ def main():
     print(f'gap pairs: +{gap}', file=sys.stderr)
 
     # Local shift: the median (dst - src) of the exact matches nearest an
-    # address. Code moves in blocks, so a match far off its neighbours'
+    # address. Code moves in blocks, so a match far off its neighbors'
     # shift is suspect.
     exact = sorted((s, d) for s, (d, how, _) in match.items() if how == 'exact')
     ex_src = [s for s, _ in exact]

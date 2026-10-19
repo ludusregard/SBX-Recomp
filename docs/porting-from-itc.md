@@ -46,7 +46,7 @@ functions here, 16,315 in ITC.
 generated trees, with addresses and global offsets masked, and pairs
 functions in passes: identical and unique (`exact`), identical up to
 register allocation (`shape`), callees at the same spot of matched callers
-(`calls`), between matched neighbours (`order`, `gap`), near the address
+(`calls`), between matched neighbors (`order`, `gap`), near the address
 the nearest exact matches predict (`local`), by where a thunk branches
 (`target`), and hand-checked pairs from `tools/match_pins.tsv` (`pinned`).
 `tools/port_addrs.py` ports addresses: functions by their match, code
@@ -59,7 +59,7 @@ How sure: **exact** (identical masked code, or up to registers); **checked
 by hand** (`match_pins.tsv`, with the reason); **high** (similarity 0.95
 and up, or every call to an already matched function lands on its match,
 "agree n/n", with similarity 0.8 and up); **check** (plausible, confirm in
-Ghidra). `FAR` = placed away from its ITC neighbours.
+Ghidra). `FAR` = placed away from its ITC neighbors.
 
 13,839 of ITC's functions are matched (2026-10-17), all in
 `docs/itc_to_sbx_functions.tsv`; of the 10,052 with calls to matched

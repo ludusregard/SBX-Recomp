@@ -22,3 +22,4 @@ includes = ["sbx_functions.toml"]
 # A leaf function (no .pdata) with a byte-offset switch; scan_ptrs took its
 # jump base 0x822DC670 for a function and split it.
 0x822DC628 = { size = 0x190 }
+0x82383C30 = {}
