@@ -1,5 +1,7 @@
-# Game files (copyrighted, supply your own copy)
-/assets/
+# Game files (copyrighted, supply your own copy).
+# assets/MOD_DATA/BUILD/TXR/BUILD/MOD_DATA lets you override BUILD.DAT files with your own.
+/assets/*
+!/assets/MOD_DATA/
 
 # Build output
 /sbx_recomp/out/

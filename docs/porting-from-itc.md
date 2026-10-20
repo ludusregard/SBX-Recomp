@@ -10,6 +10,10 @@ of the repo describes SBX on its own.
 A checkout of ITC-Recomp is a read-only reference. Its location is the
 user's; tools take it as an argument (`<ITC-Recomp>` below).
 
+Last reviewed: ITC-Recomp `d07959f` (2026-10-19). The session-start check
+in `CLAUDE.md` reports what changed upstream since this commit, then
+moves it forward.
+
 ## How the two line up
 
 | ITC-Recomp | Here |
@@ -134,6 +138,41 @@ Regenerate (from `sbx_recomp/`):
 | `sub_820C9170` | `sub_820C8F10` |  | high | calls agree 4/4 0.993 |
 | `sub_82294730` | `sub_82292170` |  | exact | exact 1.000 |
 | `sub_8218E420` | `sub_8218C240` | `PostRace::Check` | exact | exact agree 6/6 1.000 |
+| `sub_820A2D30` | `sub_820A3088` | `Matrix::RotateZ` | checked by hand | call graph (see below) |
+| `sub_820A0AC0` | `sub_820A0E18` | `Matrix::Copy` | exact | exact 1.000 |
+| `sub_82597378` | `sub_8257CC90` | `Matrix::LookAt` | high | gap 1.000 |
+| `sub_825972A8` | `sub_8257CBC0` | `Matrix::Perspective` | check | calls 0.784; same length, neighbors agree |
+| `sub_82597610` | `sub_8257CF28` | `Projector::Build` | high | calls agree 4/4 0.978 |
+| `sub_820D04E8` | `sub_820D02A8` | `Model::Draw` | exact | exact agree 16/16 1.000 |
+| `sub_820D06F0` | `sub_820D04B0` | `CarPart::Draw` | exact | exact agree 2/2 1.000 |
+| `sub_821363F0` | `sub_82134EC8` | `View::UploadPreviousViewProjection` | high | order agree 69/69 0.986 |
+| `sub_821379D8` | `sub_821364B0` | `Glow::Record` | checked by hand | unmatched by the tool; same masked code (see below) |
+| `sub_8215C780` | `sub_8215A788` | `Car::TickUpdate` | checked by hand | order agree 21/21 0.757; masked code 0.976 |
+| `sub_820DAC68` | `sub_820DA930` | `Car::DrawUpdate` | high | calls agree 32/32 0.995 |
+| `sub_820E51D0` | `sub_820E4DC0` |  | exact | exact agree 2/2 1.000 |
+| `sub_820E42E8` | `sub_820E3EB0` | `Dash::PoseTachometer` | high | calls agree 17/17 0.887; masked code 0.983 |
+| `sub_820E45A8` | `sub_820E4178` | `Dash::PoseDials` | checked by hand | calls agree 63/63 0.690; masked code 0.984 |
+| `sub_820D3688` | `sub_820D32D0` | `Dial::Angle` | high | order 0.950 |
+| `sub_820D3740` | `sub_820D3388` | `Dial::TachometerAngles` | high | order 0.984 |
+| `sub_8211D2F8` | `sub_8211D4B8` | `UiMovie::Update` | high | order agree 20/20 0.992 |
+| `sub_825A08E0` | `sub_82585FD8` | `UiMovie::ApplyAnimation` | high | calls agree 17/17 0.991 |
+| `sub_825A0548` | `sub_82585C40` | `UiMovie::ApplyTrack` | high | calls agree 7/7 0.969 |
+| `sub_8259FE68` | `sub_82585560` | `UiMovie::TrackProperty` | high | calls 0.986 |
+| `sub_8259D658` | `sub_82582D50` | `UiMovie::Child` | exact | exact 1.000 |
+| `sub_82119B80` | `sub_82119D50` | `UiMovie::RestorePose` | exact | exact agree 5/5 1.000 |
+| `sub_8210B018` | `sub_8210B140` | `ActionMappers::Update` | exact | exact agree 4/4 1.000 |
+| `sub_8210C370` | `sub_8210C4A8` | `ActionMapper::Update` | high | calls agree 3/3 0.997 |
+| `sub_8220C1E0` | `sub_82209F78` | `MenuList::Update` | exact | exact agree 4/4 1.000 |
+| `sub_82099A98` | `sub_8209A1C0` | `TickHandler::Invoke` | exact | exact 1.000 |
+| `sub_820DC958` | `sub_820DC5C8` | `BlinkTimers::Advance` | exact | exact 1.000 |
+| `sub_8215DEA0` | `sub_8215BE00` | `RaceOverlays::Run` | exact | exact 1.000 |
+| `sub_821594B8` | `sub_821573E0`? |  | check | unmatched by the tool (see below) |
+| `sub_82211A28` | `sub_8220F7B0` |  | exact | exact agree 3/3 1.000 |
+| `sub_82487C48` | `sub_8246BD88` | `MoviePlayer::OpenFile` | high | order agree 2/2 0.821; masked code 0.985 |
+| `sub_820AE958` | `sub_820AE840` |  | exact | exact agree 1/1 1.000 |
+| `sub_824657E0` | `sub_8244D0A0` | `AudioRenderDriver::Register` | checked by hand | unmatched by the tool; same masked code |
+| `sub_82465870` | `sub_8244D128` | `AudioRenderDriver::Submit` | exact | exact agree 1/1 1.000 |
+| `sub_824658C8` | `sub_8244D188` | `AudioRenderDriver::Destroy` | exact | exact 1.000 |
 
 ## ITC's known data here
 
@@ -173,6 +212,21 @@ Regenerate (from `sbx_recomp/`):
 - ITC's `sub_82152CD8` (camera shake) has no match: no SBX function that
   reads the speed looks like it, and its callee `sub_82152BD8` has none
   either. Likely ITC-only, or inlined here.
+- ITC's `sub_820A2D30` (`Matrix::RotateZ`, 130 instructions) has no
+  look-alike here, but all 15 of its 17 callers that have a match call
+  `sub_820A3088` (51 instructions) in its place. Same function, compiled
+  differently.
+- ITC's `sub_821379D8` (`Glow::Record`), `sub_824657E0`
+  (`AudioRenderDriver::Register`) and `sub_8215C780` (`Car::TickUpdate`):
+  with registers and constants masked, the code matches `sub_821364B0`,
+  `sub_8244D0A0` and `sub_8215A788` instruction for instruction (0.976 for
+  the last). The struct offsets the notes use (car+16, +696/700/704; view
+  +8080/+8144) are the same in both builds.
+- ITC's `sub_821594B8` (the rival intro's Update handler, 126
+  instructions): its neighbors put it near `sub_821573E0` (210
+  instructions), which lines up for 107 of its instructions and calls the
+  same kind of callees, plus more. Probably the same handler, extended
+  here; not checked.
 - `sub_82128D10` (ITC `sub_821292B0`) is one of three identical
   4-instruction thunks, picked by its tail call.
 

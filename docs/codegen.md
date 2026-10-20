@@ -88,7 +88,7 @@ tools need the decrypted copy, `default.xex.decrypt`.
   `core.symlinks=true`). The SDK builds libmspack, its XEX LZX
   decompressor, from `thirdparty/libmspack/cabextract/mspack/`, where all
   15 files are links to `../../libmspack/mspack/`, so the SDK build fails
-  early. `tools/fix_symlink_stubs.py` (run by `setup_repo.bat`) copies the
+  early. `tools/fix_symlink_stubs.py` copies the
   real files over the stubs and marks them assume-unchanged. Rerun it after
   re-cloning or updating the submodule. The other symlinks (MoltenVK) are
   only used on macOS.

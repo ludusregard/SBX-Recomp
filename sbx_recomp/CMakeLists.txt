@@ -59,6 +59,7 @@ include(generated/rexglue.cmake)
 # Sources
 set(SBX_SOURCES
     src/main.cpp
+    src/hooks/mod_loader.cpp
     src/hooks/post_race.cpp
     src/hooks/unlock_cut_cars.cpp
 )

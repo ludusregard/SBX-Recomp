@@ -10,7 +10,7 @@ fails. This walks the repo and all submodules, finds index entries with
 mode 120000, and replaces each stub with a copy of what it points to.
 Copied paths are marked assume-unchanged so `git status` stays clean.
 
-Usage (from the repo root; setup_repo.bat runs it):
+Usage (from the repo root):
   python sbx_recomp/tools/fix_symlink_stubs.py [repo root]
 Safe to rerun: real files and real symlinks are left alone.
 """
