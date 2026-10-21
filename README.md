@@ -78,3 +78,5 @@ files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo/sbx.exe`.
 - [docs/porting-from-itc.md](docs/porting-from-itc.md): how ITC-Recomp's
   findings are matched to this game's code.
 - [docs/build_run.md](docs/build_run.md): info on building, running and testing.
+- [mod_tools/README.md](mod_tools/README.md): tools for editing the game's
+  data files.
