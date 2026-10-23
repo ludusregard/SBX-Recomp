@@ -40,7 +40,7 @@ with no row); run it after changing either.
 | `sub_8209A8F0` | `App::Run` |  | Main loop: calls every handler in the tick list at this+4, repeats until the quit flag at this+12 is set. |
 | `sub_8209A400` | `ForEachTickHandler` |  | Calls each handler in a list through a member function pointer. |
 | `sub_82093280` | `Renderer::Init` |  | Sets the vblank interval (2 = 30 fps) via `sub_82573100`, then subscribes renderer callbacks to numbered events (2, 3, 5, 6, 16). |
-| `sub_82092E60` | `Renderer::WaitForFrame` |  | Tick handler on the main thread. Blocks until the render thread signals the frame is done (event at this+392), swaps, and starts the next frame. |
+| `sub_82092E60` | `Renderer::WaitForFrame` | Wrapped | Tick handler on the main thread. Blocks until the render thread signals the frame is done (event at this+392), swaps, and starts the next frame. With `--subtick`, then paces the coming pass (`src/subtick/renderer_hooks.cpp`, see "Subtick"). |
 | `sub_82092050` | `Renderer::ThreadLoop` |  | Render thread loop; started through `sub_825739E0`. Draws one frame each time the main thread asks, after a 2-vblank wait. |
 | `sub_82091B60` | `Renderer::Present` |  | Flushes, waits for the vblank interval (`sub_825737E8` → `sub_82573638`), then swaps buffers. Event 5. |
 | `sub_82091FB0` | `Renderer::DrawFrame` |  | Render thread: calls each draw listener in the list at renderer+28. |
@@ -49,36 +49,58 @@ with no row); run it after changing either.
 | `sub_82098E68` | `Scene::Draw` |  | Draw listener on the same object. Calls the mode object's draw (vtable slot 5), reading live game state. |
 | `sub_8216F0F8` | `Delegate::Invoke` |  | Calls the function at +8 with the argument at +4. Used for tick and draw listeners. |
 | `sub_8222E468` | `MemberDelegate::Invoke` |  | Calls the member function at +8 on the object at +4, adjusted by +12. |
-| `sub_82573100` |  |  | Receives the frame interval from `sub_82093280`. |
-| `sub_82573638` | `VideoOutput::WaitForVblank` |  | Waits for the 2-vblank interval after a device call (`sub_8229DD58`). |
+| `sub_82573100` |  | Wrapped | Receives the frame interval from `sub_82093280` in r6 (2) and stores it at +0x130 (0 and 1 store 1, 2 stores 2, 4 stores 3, 0x80000000 stores 0); `VideoOutput::WaitForVblank` waits that many vblanks before each present. 1 with `--tick_rate_60` (`src/tick_rate/tick_rate.cpp`, see "Tick rate experiments"). |
+| `sub_82573638` | `VideoOutput::WaitForVblank` | Overridden | r3 the video output: calls the device (`sub_8229DD58` with [+140]), then waits for the vblank interval at +0x130 (+304). With `--subtick` only the device call runs; the pacer holds the rate (`src/subtick/renderer_hooks.cpp`). |
 | `sub_82573920` | `Event::Wait` |  | r3 = event, r4 = pointer to timeout (-1 = forever). |
 | `sub_82573908` | `Event::Signal` |  | r3 = event. |
 | `sub_822AE7E8` |  |  | Graphics driver present bookkeeping (frame counter at +20024). Library code, not game timing. |
 | `sub_8259F788` | `QueryPerformanceCounter` |  | System library. |
 | `sub_820BFF60` | `Vehicle::GetSpeedKmh` |  | Returns the float at vehicle+48 (m/s) times 3.6. |
 | `sub_820943D8` |  |  | First tick handler: polls input, then walks listener lists that run both game logic and the draw step. |
-| `sub_82106478` | `GameMessages::Dispatch` |  | Delivers the game's queued messages to their handlers: 0 = Update (all game logic), 1 = Draw. |
+| `sub_82106478` | `GameMessages::Dispatch` | Overridden | Delivers the game's queued messages to their handlers: 0 = Update (all game logic), 1 = Draw. r3 = the dispatcher: handlers +0 (array), handler count +200, queue of 50 12-byte messages at +204, queued count +804, read index +808. The game has several dispatchers (40 call sites). Replaced with the same steps (`src/subtick/game_messages.cpp`) with `--subtick` (Update skipped on render-only passes); otherwise the original. |
 | `sub_82106410` |  |  | Picks the handler object a message goes to; its method 0 handles it. |
-| `sub_82099700` | `Input::Update` |  | Input manager update. |
-| `sub_82159540` | `Race::DrawStep` |  | The race's draw step (Draw message). Writes a field at +64 of the object its calls return. |
-| `sub_820A3B98` | `CameraPass::Update` |  | Rebuilds a camera pass's view (+0x10) from its eye, target and up vector (+0x190, +0x1A0, +0x1B0), and its view-projection (+0x90 = view * projection at +0x50). Called several times per Draw for pass 0. |
+| `sub_82099700` | `Input::Update` | Wrapped | r3 the input manager: physical pads (+988, 4 x 212, `PhysicalPad::Read`), logical pads (+8, 5 x 196, `LogicalPad::Build`), processors (+1840, 5 x 416, vtable slot 1), listener slots (+3924, 5 x 12; the first node's object, vtable slot 1). Skipped on render-only passes (`src/subtick/input.cpp`). |
+| `sub_82159540` | `Race::DrawStep` | Wrapped | The race's draw step (Draw message). Writes a field at +64 of the object its calls return. Noted to tell races from menus (`src/subtick/game_messages.cpp`). |
+| `sub_820A3B98` | `CameraPass::Update` | Wrapped | Rebuilds a camera pass's view (+0x10) from its eye, target and up vector (+0x190, +0x1A0, +0x1B0), and its view-projection (+0x90 = view * projection at +0x50). Called several times per Draw for pass 0. On pass 0 in a race, built from the camera blended between ticks; also run on pass 0 before `Race::DrawStep` on render-only passes, so the cars are drawn with the frame's view-projection (`src/subtick/car_transforms.cpp`, see "Subtick"). |
 | `sub_8209BE70` | `Matrix::Multiply` |  | out (r3) = a (r4) * b (r5), 4x4. |
 | `sub_8257ACD0` | `Recorder::RecordObject` |  | The bulk per-object recorder, ~150 calls per pass in a race: records command 7 with vertex constants 0-8: world (r5) * camera view-projection (r4) in c0-c3, the world matrix in c4-c7 (for some objects a projective matrix instead), and the camera's world position in c8. The camera is often a stack copy, not a camera pass. |
 | `sub_8257AAE0` |  |  | Multiplies a world matrix and camera into a stack temporary; not recorded (likely a visibility test). |
 | `sub_825758A0` | `Command::SetShaderConstants` |  | Render thread, command 7: r3 = payload, r4 = register count, r5 = stage << 24 \| type << 16 \| start << 8 \| count. |
 | `sub_82572638` | `CommandList::AllocateSlots` |  | r3 = list, r4 = slot count; returns the first 16-byte slot. |
 | `sub_820BFF88` | `Vehicle::GetDistancePerFrame` |  | Speed (m/s) times a hard-coded 1/30 s. |
+| `sub_820C2E40` | `Vehicle::Tick` | Original | Once a tick per car: r3 = car, r4 = its index in the control record table at `0x826B5810`, r5 and r6 for `sub_820C2208`. Stores speed x `[0x820029B8]` at car+6160, copies car+5236 (4 bytes) to car+6164, then twice: `Vehicle::ApplyControls`, clears the record's one-shot bits (`0x00010003`), `Vehicle::Step` with `[0x825F17E8]` (1/60), `sub_820C1B98`. Then `sub_820C2208` once. Called by `sub_82163CC8`, `sub_82164188`, `sub_82171950` (race modes) and `sub_8216F398` (every car). See "Vehicle stepping". The game's own (the weighted input is written at `PlayerControls::Build` instead). |
+| `sub_820B6330` | `Vehicle::Step` | Original | r3 = car, f1 = step length. `Vehicle::SetStepLength`, then the car's physics parts (car+0x930 read by 9 of them), with an inner loop of car+0x940 (10) iterations (`sub_820B0600`, `sub_820B0720`, `sub_820B3E18`, `sub_820B07F0`, `sub_820B25E0`, `sub_820B4610`). Called by `Vehicle::Tick` and, once each with 1/60 from `0x82609328`, by `sub_8216E590` and `sub_821703B8` (placing cars). |
+| `sub_820AF9D0` | `Vehicle::SetStepLength` |  | Stores f1 at car+0x930 and 1/f1 at car+0x934. Nothing under `Vehicle::Step` reads +0x934 or the 60.0 `sub_820B0DD0` stores at +0x938. |
+| `sub_820BFB68` | `Vehicle::ApplyControls` | Original | r3 = car, r4 = its control record: steering +8, throttle +4, brake +6, +10, flags +0 (bits pick digital or analog handling of each), bytes +14..+17 (+17 the control type). Rates are scaled by `[0x825F17E8]`. Bits 0x1 and 0x2 (one-shot) and 0x2000 only set request bytes (car+2284, +2285, +2286). |
+| `sub_820B1678` |  | Original | Part of `Vehicle::Step` (a leaf): counts car+0x958 up by 1 per step while a slip test holds (to 30, the 30.0 at `0x82000D54`, which is also the test's threshold), down otherwise, and scales car+284 by 1 - counter x 1/30 (car+284 is worked out again later in the step by `sub_820B1EB0`). Counts steps, so it's only right at the game's two steps a tick; the car physics doesn't change its step count. |
+| `sub_820C1B98` |  |  | Each step: updates five tracked positions (the car, `sub_82249148` of car+336, into car+5232+16; then 4 wheels, 368 bytes apart) through `sub_820F8350`. |
+| `sub_820C2208` |  |  | Once a tick (r3 = car+6160, r4 = car): the car's course position, then the odometer: speed x 1/30 x a constant added to +84 and +88. |
+| `sub_8216F398` |  |  | Calls `Vehicle::Tick` for every car in `[0x826C7D9C]`+0xB34 (count +0xB6C). |
+| `sub_8215DBF8` | `PlayerControls::Build` | Wrapped | r3 the control record, r5 the pad, r6 a message dispatcher: builds the record from the action mappers through `Input::QueryAbstract` (ids from the table `[0x826B5838]` + pad x 120 + 0x1F7C0; throttle +4, brake +8, steering +0 after abstract id 1, +12, +48), each an integer curve with a dead zone; also posts messages 30 and 29 for one button. Reached through a vtable (`sub_8215E390`). Its record is the tick's last input sample (`src/subtick/input.cpp`). |
+| `sub_821024D8` | `Input::Query` |  | r3 the pad, r4 an action id (151-180), r5 the kind (0 held, 1 pressed, 2 fired, 3 a u16 analog value, 4 a float analog value), r6 the result: the action mapper's read slot. |
+| `sub_82102610` | `Input::QueryAbstract` |  | r3 the pad, r4 an abstract id (0-30), r5, r6 as `Input::Query`: maps it to one or two actions (e.g. 155 and 156 combined, one negated). |
+| `sub_82105790` |  |  | Returns `[0x826B5838 + 4 x r3]`. |
+| `sub_82577498` | `PhysicalPad::Read` |  | r3 the pad, r4 a pointer to the user index: XInput state into 40 floats at +8 (cleared each read), flags +4, rumble motors +168 and +180 (ticked down each read). |
+| `sub_82577150` | `LogicalPad::Build` |  | Sums its bound pads' 40 values and clamps them. |
+| `sub_8210C218` | `ActionMapper::UpdateActions` |  | r3 the mapper + 448: `ActionMapper::UpdateAnalog`, then `ActionMapper::UpdateHysteresis` per action and `ActionMapper::UpdateButtons`. |
+| `sub_8210B908` | `ActionMapper::UpdateAnalog` |  | The analog value of each action: u16s at mapper+1072, floats at +1132, through response curve objects (vtable slot 1). |
+| `sub_8210B850` | `ActionMapper::UpdateHysteresis` |  | An action's on/off thresholds and state: 20 bytes each at mapper+1852. |
+| `sub_8210BCD8` | `ActionMapper::UpdateButtons` |  | Held, held before, pressed, released and fired words at mapper+448..+467; steps each action's repeat object (pointers at +472, vtable slot 1). |
+| `sub_8210B6A0` | `Repeat::Step` |  | A repeat object: count +4, delay +8, period +12. |
+| `sub_8215C0A0` |  |  | The race overlays' Update handler: `RaceOverlays::Run` on r3 + 9608. |
+| `sub_8215C0A8` |  |  | The race overlays' Update handler while paused (ITC's `8215E158`): `RaceOverlays::Record` on r3 + 9608. |
+| `sub_8226F9D8` | `Color::HsvToRgb` |  | A leaf: hue (degrees) x 1/60 (`0x820029C0`) gives the sector, then saturation and value. Likely converts the car paint colors (`docs/game_data.md`, car specs): halving its 1/60 swapped them. `sub_821E6F28` is a copy. |
 | `sub_8210F260` |  |  | Wind sound; scales with speed. |
 | `sub_8213DE38` |  |  | Parent of the speed trail object (switches mode at about 88 km/h). Calls `sub_8213DBE8`, `sub_8213DA48` and `sub_8213DDB8`. |
 | `sub_8213BEB8` |  |  | Resets the trail history; runs on a camera switch. |
-| `sub_820F1038` | `TextureAnimations::Advance` |  | From the draw step part `sub_820F5F48`: advances the flipbook animation set at r3+1060 (`sub_821453B0`). |
+| `sub_820F1038` | `TextureAnimations::Advance` | Wrapped | From the draw step part `sub_820F5F48`: advances the flipbook animation set at r3+1060 (`sub_821453B0`). Skipped on render-only passes (`src/subtick/per_frame_logic.cpp`). |
 | `sub_821453B0` |  |  | Calls `sub_82145350` on every animation in a set: count at +0, then offsets to each animation. |
 | `sub_82145350` |  |  | Advances one flipbook animation: frame count +0, current frame +4, tick counter +8 (wraps at the length at +12), frame start ticks from +16. |
 | `sub_82145410` |  |  | Returns the current frame's entry of animation r4 in set r3 (texture id at +4). |
 | `sub_821452C8` |  |  | Finds the animation in set r3 whose texture is r4; -1 if none. |
 | `sub_82146F00` |  |  | Draws the light groups: for each group, builds a light list on the stack (count +32, 48-byte lights at +36, from static level data) and picks its texture's current animation frame. Calls `sub_8209CED0` → `sub_8209CD58`. |
-| `sub_820F5610` | `Minimap::Draw` |  | From the draw step part `sub_820F5F48`; steps the minimap blink clock at `0x826B5784`/`0x826B5788` after drawing. |
-| `sub_82107A38` |  |  | From Draw; adds one to the play time frame counter at `0x826B5870`. |
+| `sub_820F5610` | `Minimap::Draw` | Wrapped | From the draw step part `sub_820F5F48`; steps the minimap blink clock at `0x826B5784`/`0x826B5788` after drawing. Both put back on render-only passes (`src/subtick/per_frame_logic.cpp`). |
+| `sub_82107A38` |  | Wrapped | From Draw, every pass; adds one to the play time frame counter at `0x826B5870` and runs `ActionMappers::Update` (call at `0x82107B48`). The one is taken back on render-only passes, and every other pass with `--tick_rate_60` (`src/subtick/per_frame_logic.cpp`). |
 | `sub_82110928` |  |  | Turns the play time frame counter into hours, minutes and seconds (30, 1800, 108000 frames). |
 | `sub_82107CB8` | `Boot::StartMovie` |  | Message handler: plays the next boot movie, id from the table at `0x826B588C` (index at `0x826B58A8`), via `sub_820A45D0` (name table at `0x8233AF8C`). |
 | `sub_82107D80` | `Boot::WaitForMovie` |  | Message handler, every tick while a boot movie plays; ends the step on a button press if skippable (`0x826B58A4`) or when the movie has finished. |
@@ -141,24 +163,29 @@ with no row); run it after changing either.
 | `sub_820D02A8` | `Model::Draw` |  | Draws a model: a visibility test (`sub_8257AAE0`), then `Recorder::RecordObject`. |
 | `sub_820D04B0` | `CarPart::Draw` |  | r3 the part (nothing if its model at +4 is 0), r4 the camera, r5 the world matrix; calls `Model::Draw`. |
 | `sub_8215A788` | `Car::TickUpdate` |  | The tick's car update: copies the car's world matrix to car+16 and stores the gauge values (speed, revs, boost) at car+696/700/704. |
-| `sub_820DA930` | `Car::DrawUpdate` |  | Draw's per-car update, on every pass: takes 1.0 off car+704 (the boost; the tick sets it again), then draws the car's parts. |
+| `sub_820DA930` | `Car::DrawUpdate` | Wrapped | Draw's per-car update (r3 = car - 4288), on every pass: takes 1.0 off car+704 (the boost; the tick sets it again), then draws the car's parts. The boost is replayed from the logic pass on render-only passes (`src/subtick/per_frame_logic.cpp`). |
 | `sub_820E4DC0` |  |  | r3 the dash: calls `Dash::PoseTachometer` when [dash+20] is set, then `sub_820E35C0` when [dash+2180] is. |
 | `sub_820E3EB0` | `Dash::PoseTachometer` |  | r3 the dash, r4 the car, r5 the camera passes: poses the tachometer needle from `Dial::TachometerAngles`. |
 | `sub_820E4178` | `Dash::PoseDials` |  | r3 the dash, r4 the car, r5 the camera passes: poses up to seven needles, each from `Dial::Angle`. |
 | `sub_820D32D0` | `Dial::Angle` |  | A needle's angle from a gauge value. |
 | `sub_820D3388` | `Dial::TachometerAngles` |  | The tachometer's two angles from the revs. |
-| `sub_8211D4B8` | `UiMovie::Update` |  | r3 the movie, r4 0 = advance a frame and draw, 1 = draw only. Runs the HUD, the race start countdown and the pause menus. |
+| `sub_8211D4B8` | `UiMovie::Update` | Wrapped | r3 the movie, r4 0 = advance a frame and draw, 1 = draw only. Runs the HUD, the race start countdown and the pause menus. Advancing is replayed from the logic pass on render-only passes (`src/subtick/per_frame_logic.cpp`). |
 | `sub_82585FD8` | `UiMovie::ApplyAnimation` |  | Applies each playing animation's tracks with t = (time - k0) / (k1 - k0), clamped. |
 | `sub_82585C40` | `UiMovie::ApplyTrack` |  | r3 the node, r4 the track (+0 its property id), f1 t: writes one word into the node. Some tracks add to the value instead of setting it. |
 | `sub_82585560` | `UiMovie::TrackProperty` |  | r3 a property id: its 12-byte descriptor (+0 node offset, +4 type). |
 | `sub_82582D50` | `UiMovie::Child` |  | r3 the node, r4 an index: that child (count at node+112). |
 | `sub_82119D50` | `UiMovie::RestorePose` |  | Copies a movie's rest pose back onto its live nodes. |
-| `sub_8210B140` | `ActionMappers::Update` |  | Updates every action mapper (`sub_8210C4A8` each): held, pressed and fired words, and the menu repeat. Counts calls, so it must run once a tick. |
-| `sub_8210C4A8` | `ActionMapper::Update` |  | One action mapper. |
+| `sub_8210B140` | `ActionMappers::Update` | Wrapped | r3 the mapper list: updates every action mapper (`ActionMapper::Update` each): held, pressed and fired words, and the menu repeat. Counts calls, so it must run once a tick: skipped on render-only passes, except when `src/subtick/input.cpp` runs it for the analog values. |
+| `sub_8210C4A8` | `ActionMapper::Update` | Wrapped | r3 the mapper: raw axes from the logical pad (`[+2880]`) into +388..+446, then `ActionMapper::UpdateActions`. Digital state put back after it when run for the analog values (`src/subtick/input.cpp`). |
 | `sub_82209F78` | `MenuList::Update` |  | A menu list's update. |
 | `sub_8209A1C0` | `TickHandler::Invoke` |  | r3 the app, r4 the handler (target at +8). |
-| `sub_820DC5C8` | `BlinkTimers::Advance` |  | Steps the blink timers; once a tick. |
-| `sub_8215BE00` | `RaceOverlays::Run` |  | The race overlays (25 objects at r3, e.g. the marker above opponents): update (vtable slot 4) and record (slot 5). |
+| `sub_820DC5C8` | `BlinkTimers::Advance` | Wrapped | Steps the blink timers; once a tick: skipped on render-only passes (`src/subtick/per_frame_logic.cpp`). |
+| `sub_8215BE00` | `RaceOverlays::Run` | Overridden | The race overlays (25 objects at r3, e.g. the marker above opponents, the light trails): update (vtable slot 4) and record (slot 5). With `--subtick`, the update here on logic passes, the recording moved to just before `Race::DrawStep` on every pass (`src/subtick/per_frame_logic.cpp`, "Race overlays"); otherwise the original. |
+| `sub_8215BE80` | `RaceOverlays::Record` | Overridden | Records the 25 overlays (slot 5) without updating them; from the paused handler `sub_8215C0A8`. With `--subtick` in a race, on logic passes it only saves the list, and the recording happens before `Race::DrawStep` on every pass, as for `RaceOverlays::Run`. |
+| `sub_821281B0` | | Wrapped | World-space sprite list recorder (r3 = list, r4 = camera pass, its +144 used): the light trails. Corners blended between ticks. ITC's `sub_82128750`. |
+| `sub_82127C08` | | Wrapped | Single world-space sprite recorder (r3 = sprite, r4 = camera pass), reached through `sub_82128CF8`. Corners blended between ticks, except for the marker (blended by its centre in `sub_8212BDA0`). ITC's `sub_821281A8`. |
+| `sub_8212BDA0` | | Wrapped | The opponent marker's overlay record (vtable slot 5; r3 = overlay, r4 = camera pass index; ITC's `sub_8212CE40`): builds the sprite on the stack from its centre (overlay +176..+184, set once a tick) and axes facing the camera pass's eye. With `--subtick` the centre is blended between ticks for the call. |
+| `sub_82102B30`, `sub_82102BB0` | | | Replay: store the player's control record (r3 = record, r4 = pad), and replace it from the replay while one plays; from `sub_8215E390` right after `PlayerControls::Build`. |
 | `sub_821573E0` |  |  | Probably the rival intro cutscene's Update handler: 107 of its 126 expected instructions line up, but it's 210 long and makes calls the expected one doesn't. Not checked. |
 | `sub_8220F7B0` |  |  | Draws the rival's logo. |
 | `sub_8246BD88` | `MoviePlayer::OpenFile` |  | The movie player's file open (through a vtable); calls `CreateFile`. |
@@ -230,6 +257,257 @@ doubles game speed. Functions that load the step as a float constant from
   `sub_8210DBE8`, `sub_8210F390`, `sub_8211F6F0`, `sub_82129DE0`
 - 1/60: `sub_820B0DD0`, `sub_8226F9D8`, `sub_82153E40`, `sub_821E6F28`
 
+Not all of these are time steps. `sub_8226F9D8` and `sub_821E6F28` are HSV to
+RGB conversions: 1/60 turns a hue in degrees into its sector, so halving
+`0x820029C0` swapped the car paint colors (green and blue). `sub_820B0DD0`
+is the car's creation (its first step length, car+0x930). `sub_820B1678`
+uses 1/30 as "per counted step".
+
+Every load of those two floats in `.text` was checked (2026-10-17, a
+`lis`/`addi`/`lfs` scan of `default.xex.decrypt`): only these functions read
+them, each with one `lfs` (`sub_820B1678` at `0x820B173C`, `sub_820BFF88` at
+`0x820BFF90`, `sub_8226F9D8` at `0x8226FA30`, `sub_821E6F28` at
+`0x821E6F80`). The neighboring floats (`0x820029B0` to `0x820029CC`) are
+separate constants.
+
+Also loaded, and not yet checked:
+
+- 30.0 at `0x82000D54` (22 functions): `sub_820A9DE0`, `sub_820AA040`,
+  `sub_820C5BA0`, `sub_820DC8E8`, `sub_820DCD88`, `sub_820DD298`,
+  `sub_82110C18`, `sub_821121F0`, `sub_82121920`, `sub_82164500`,
+  `sub_8222BE40`, `sub_82450A78`, `sub_82467398`, `sub_824673F8`,
+  `sub_8246ACB0`, `sub_82482410`, `sub_82568948`, `sub_8256D8F8`, and leaf
+  functions (no `.pdata` entry) with the load at `0x820B16E0`, `0x820DC154`,
+  `0x82143D18` and `0x8256B76C`. 30.0 also at `0x82002B80` (`sub_820C0B48`),
+  `0x82002BAC` (`sub_8210EAB0`), `0x82007F50` (`sub_8210F390`), `0x82008744`
+  (`sub_8212F278`, `sub_8212F5D8`), `0x8200A108` (`sub_8218FF88`) and
+  `0x82010028` (`sub_82121920`).
+- 60.0 at `0x82000F0C` (9 functions): a leaf ending at `0x82095790`
+  (returns a / b * 60), `sub_820A7C08` (compares against 60),
+  `sub_82110C18` and `sub_821110B0` (copied into tables on the stack), a
+  leaf with the load at `0x821441A0` (compares against 60), `sub_821447D8`
+  and `sub_82144958` (a value times a constant, clamped to 60),
+  `sub_8217B770`, `sub_8217DFF0` (passed as f1). 60.0 also at
+  `0x82002950` (`sub_820B0DD0`, stored into the object at +0x934 and
+  +0x938). Some of these are likely not times (60
+  degrees, a speed limit), so these constants are shared and can't be
+  patched as a whole.
+- 1/30 and 1/60 as `.data` variables (writable, so possibly tuning values):
+  1/60 at `0x825F17E8` (`sub_820BFB68`, `sub_820C2E40` and a leaf with the
+  load at `0x820BFF54`),
+  `0x82609328` (`sub_8216E590`, `sub_821703B8`) and `0x82609370`
+  (`sub_82151B18`); 1/30 at `0x8260707C` (`sub_82126C10`, `sub_82126D10`,
+  `sub_82126EA8`, `sub_82127428`, `sub_821275E0`), `0x825F3204`
+  (`sub_820FF1A0`), `0x82607690` (`sub_82144558`), `0x82609304`
+  (`sub_82160FE8`) and `0x82609374` (`sub_82151B18`); many more are only
+  written by static initializers (`0x825BE8CC` to `0x825BF1F4`).
+
+Integer frame counts (for example `cmpwi r11,60`) aren't included.
+
+## Tick rate experiments (parked)
+
+A true tick rate upgrade: all game logic at 60 ticks a second. Parked: the
+game keeps its 30 Hz tick (see "Subtick"), as the original replays depend
+on it. `src/tick_rate/tick_rate.cpp`, two switches, both off by default:
+
+- `--tick_rate_60`: the present interval is 1 vblank instead of 2
+  (`sub_82573100`), so the main loop and all game logic run 60 times a
+  second. Play time counts every other tick (`sub_82107A38`).
+- `--tick_rate_half_step`: halves the step lengths once the XEX is loaded:
+  1/30 -> 1/60 at `0x820029C4` (`.rdata`, mapped read-only, so the page is
+  made writable for the write and put back) and the cars' step length at
+  `0x825F17E8` 1/60 -> 1/120. `--tick_rate_half_step_mask` picks which (bit
+  0 = 1/30, bit 2 = the cars' step; default 5, both). The 1/60 at
+  `0x820029C0` was halved too until 2026-10-18; that swapped the car paint
+  colors (it's the HSV conversion's 1/60), so it's left alone.
+
+With `--tick_rate_60` alone (2026-10-17, before the cars' step length was
+added) the game ran at twice the speed. So did halving only the two `.rdata`
+constants: the cars are stepped by `0x825F17E8`, not by them (see "Vehicle
+stepping"), and some of their users aren't step lengths (`sub_820B1678`).
+
+On 2026-10-18: halving only the cars' step length (mask 4) at 30 ticks
+halved the car's speed and nothing else. With `--tick_rate_60` too, the
+car's speed was right (timed with a stopwatch), but grip and the rest of the
+handling felt doubled: what runs once a tick (`sub_820C2208`, the rest of
+game logic) ran twice as often.
+
+What a real upgrade would also need: everything that counts ticks
+(`sub_820B1678`, the action mappers' repeats, UI movies, the title screen's
+600, the 30.0 and 60.0 users above, integer frame counts) scaled.
+
+## Vehicle stepping
+
+The game already steps the cars twice a tick. `Vehicle::Tick`
+(`sub_820C2E40`), once a tick per car, runs two steps of 1/60 s
+(`[0x825F17E8]`, a `.data` float only ever read): each applies the car's
+control record (`Vehicle::ApplyControls`, `sub_820BFB68`), clears the
+record's one-shot bits (`0x00010003`: the first step sees them, the second
+doesn't), steps the physics (`Vehicle::Step`, `sub_820B6330`) and calls
+`sub_820C1B98`. Then it calls `sub_820C2208` (the odometer, which reads
+1/30) once.
+
+`Vehicle::Step` stores the step length at car+0x930 and its inverse at
+car+0x934 (`sub_820AF9D0`), then runs the car's physics parts and an inner
+loop of car+0x940 iterations (10, set when the car is created in
+`sub_820B0DD0`). Checked 2026-10-23 in the generated code: nine parts under
+it read +0x930, none reads +0x934 or +0x938 (60.0 from creation), so the
+physics scales with the step length. The one exception is `sub_820B1678`,
+which counts steps (a ramp to 30). `Vehicle::ApplyControls` scales its rates
+by `[0x825F17E8]`, not by the step it's given.
+
+The control records: a table of pointers at `0x826B5810`, one per car index.
+The race modes (`sub_82163CC8`, `sub_82164188`, `sub_82171950`) build a
+car's record on the stack and copy its 5 words into the table's record just
+before calling `Vehicle::Tick`. The player's record comes from
+`PlayerControls::Build` (`sub_8215DBF8`), which reads the action mappers:
+pads (`Input::Update`) -> action mappers (`ActionMappers::Update`, from
+`sub_82107A38`) -> `Input::QueryAbstract` / `Input::Query` -> the record.
+
+## Subtick
+
+Frames between the game's 30 Hz ticks, with the cars' input sampled
+between ticks and the cars' drawn matrices blended between ticks. Game
+logic and car physics keep their 30 Hz tick, so the original replays stay
+compatible. `src/subtick/`, all behind `--subtick` (off by default). The only
+other switches are `--max_fps`, `--subtick_input` (on with it),
+and `--subtick_input_sensitivity`; everything else here is always on with `--subtick`:
+
+- **Passes** (`renderer_hooks.cpp`, `frame_pacer.cpp`,
+  `game_messages.cpp`): after `Renderer::WaitForFrame`, the pacer picks the
+  coming main loop pass. When the next 30 Hz tick is due it's a logic pass;
+  otherwise, in races, it waits for the next frame slot (`--max_fps`, 60 by
+  default, 0 = unlimited) and the pass is render-only: `GameMessages::Dispatch`
+  consumes Update messages without delivering them (main thread only), so
+  the pass draws the same state again. Menus stay at 30 fps (they record
+  their UI and read input during Update). A pass is in a race when the last
+  logic pass ran `Race::DrawStep`. The present's 2-vblank wait is dropped.
+- **Car input** (`input.cpp`, `input_weights.cpp`, `--subtick_input`):
+  the player's record gets one input for the tick: the samples taken over
+  the last tick's interval, weighted as a whole (all five axes together) by
+  `Input_Aggregate`. The weights are (1 - s) x [newest] + s x ([newest] +
+  biggest change) / 2, normalized, where the change is a sample's move from
+  the one before it over all axes, relative to the largest in the interval.
+  The first sample (last tick's) gets no weight. `--subtick_input_sensitivity`
+  (s, 0.0 to 1.0): 0 is the tick's own input only, as the game reads it; 1
+  is half newest, half the biggest changes (flicks and brake blips count).
+  The presence bits come from the newest sample. Physics is unchanged.
+  Substepping the physics (N steps a tick) was tried and broke the car's feel
+  from 4 steps up (the physics assumes its step count), so it was removed.
+- **Input** (`input.cpp`, `--subtick_input`, on with `--subtick`):
+  `Input::Update` is skipped and `ActionMappers::Update` runs once a tick,
+  so presses, menu repeats and the input
+  listeners count ticks. At the start of each render-only pass in a race,
+  the pads are read again (`PhysicalPad::Read` with the flags and rumble
+  timers put back, `LogicalPad::Build`) and the mappers updated with their
+  digital state put back (+448..+471, +1852..+2451 and the 16 bytes of each
+  repeat object), so only the analog values move. The record's five axes
+  are then worked out as `PlayerControls::Build` does (the same integer
+  curves and dead zones) and kept as a sample. The tick's own record is the
+  last sample; the last one carries over as the next tick's first.
+  The weighted input (see "Car input") is written into the record by the
+  `PlayerControls::Build` override, right as it's built, before the race
+  mode copies it anywhere. The race mode's caller (`sub_8215E390`) then
+  hands the record to the replay recorder (`sub_82102B30`) or, playing a
+  replay, replaces it from the replay (`sub_82102BB0`). So a replay stores
+  exactly the input the physics used and plays back 1:1. (Before, the
+  weighted input was swapped in inside `Vehicle::Tick` only, so replays
+  stored the tick's own input and played back "sloppy".) `Vehicle::Tick` is
+  the game's own. AI cars and traffic get no samples and run as the game
+  does.
+- **Cars** (`car_transforms.cpp`): the world matrix at car+16 is set once
+  a tick. `Car::DrawUpdate` (`sub_820DA930`, once per view) records it as
+  the tick's pose on logic passes, once per car per tick (the pacer's tick
+  count). Before `Race::DrawStep` (`sub_82159540`) on every pass, every car
+  recorded this tick is blended between its last two poses by the frame's
+  progress, and put back after the step if it still holds the blend. On a
+  logic pass, cars whose matrix already holds the new pose are recorded
+  first; the game sets the rest during the draw, so `Car::DrawUpdate` also
+  writes the blend for its own draw when the matrix isn't blended yet.
+  Blended: position and rotation rows (each row keeps its length). Only
+  consecutive ticks blend; over 8 m in a tick is a cut (a traffic car
+  recycled elsewhere). Wheel spin and steering still step per tick.
+- **Main camera** (`car_transforms.cpp`): camera pass 0 (array at
+  `0x826AA8E0`, 592 bytes a pass, as in ITC) holds the eye (+400), target
+  (+416), up (+432) and roll (+448). `CameraPass::Update` (`sub_820A3B98`)
+  builds the view (+16) and view-projection (+144 = view x projection +80)
+  from them, several times a Draw. On pass 0 in a race each call is matched
+  by its order within the pass; the logic pass records what each is given,
+  and on every pass a call given exactly the tick's values builds from the
+  blend. Calls given other values are left alone. Over 8 m between ticks is
+  a cut. The blend stays in the pass for the rest of the frame and the
+  tick's values go back when the next pass starts
+  (`CarTransforms_EndFrame`, before any game logic). The draw reads the eye
+  and target besides the view: the camera position the cars' paint
+  reflections are worked out against (`0x8264EA40`, copied from the eye per
+  view by `sub_820C5BA0` and by `sub_820F3398`, and passed in each part's
+  upload, c8, by `sub_8257ACD0`), and the direction the light glows'
+  billboards face (`sub_8209C800`). Put back right after each call, those
+  got the tick's eye against a blended view: the reflections and the head
+  and tail light glows shook while the geometry didn't.
+- **Cars and the view-projection** (`CarTransforms_RebuildCamera`): the
+  cars' parts are drawn with pass 0's +144 as it is when `Car::DrawUpdate`
+  runs (the part draw multiplies it with car+16 into the frame's draw
+  packets). `Race::DrawStep` draws the cars (`sub_820C5BA0`) before its own
+  camera updates (`sub_820F5F48`). On a logic pass the Update message has
+  already run `CameraPass::Update` on pass 0 for the frame (5 calls against
+  4 on render-only passes), but render-only passes skip Update, so the cars
+  were drawn with the previous frame's camera while the world used the new
+  one (every car jumped ahead and back, ABAB, with the world smooth). On
+  render-only passes in a race, `CameraPass::Update` now runs on pass 0
+  just before `Race::DrawStep`.
+- **One progress per frame** (`FramePacer::FrameProgress`): the blend's
+  progress through the tick is taken once, when the pass starts, and used
+  for everything blended in that frame. Read at each use, a logic pass built
+  its camera early in Update and drew the cars ~10 ms later at a larger
+  progress, so the cars were a few cm out of step with the camera on logic
+  frames (plain in the cockpit view).
+- **Per-frame logic** (`per_frame_logic.cpp`): what runs from Draw and
+  counts passes is kept to once a tick on render-only passes: blink timers,
+  texture animations, the minimap blink clock, play time, UI movies and the
+  boost value (replayed from the logic pass's state).
+- **Race overlays** (`per_frame_logic.cpp`): the marker above opponents,
+  the tire smoke and the light trails behind head and tail lights,
+  world-space sprites recorded with a camera pass's view-projection (+144)
+  as it is when they record. The game records them during Update
+  (`RaceOverlays::Run`, `sub_8215BE00`, from handler `sub_8215C0A0`), which
+  render-only passes skip; they used to be recorded on render-only passes
+  with the logic pass's cameras, so they were drawn with an older camera
+  than the world and shook against it. Now the update (vtable slot 4) runs
+  in Update on logic passes and the recording (slot 5) on every pass just
+  before `Race::DrawStep`, once pass 0 holds the frame's camera
+  (`PerFrameLogic_RecordRaceOverlays`; the other passes as the update saw
+  them). A pass records if the overlays were updated on the latest tick or
+  the one before (a logic pass whose update came after its draw step still
+  draws). While paused the overlays aren't updated: the paused Update
+  handler `sub_8215C0A8` only records them (`RaceOverlays::Record`,
+  `sub_8215BE80`), so they were drawn on logic frames and not between them
+  (the marker and the tire smoke flickering every other frame). That
+  recording is moved before `Race::DrawStep` on every pass too.
+- **World-space sprite corners** (`per_frame_logic.cpp`, ported from
+  ITC-Recomp): a sprite's four corners
+  (16 floats at +80) are written once a tick, so with the camera blended
+  they ran ahead of their car early in each tick. The two recorders,
+  `sub_821281B0` (sprite lists, the light trails; count at +0x109F0, sprite
+  i at +80 + 64i) and `sub_82127C08` (single sprites, the marker), blend
+  the corners between their last two ticks by the frame's progress while
+  they record, then put them back. Lists are matched by list and order in
+  the pass, single sprites by sprite, caller and order. A corner that moved
+  over 10 units in a tick is a new sprite. The list
+  follows ITC-Recomp's findings for the same game; more may turn up.
+- **Opponent marker** (`per_frame_logic.cpp`, `sub_8212BDA0`): its record
+  builds the sprite each call from a centre set once a tick (overlay
+  +176..+184) and axes facing the camera's eye. With the camera blended the
+  axes, and so the corners, change every frame, so the corner blending
+  above never matched it and the centre stepped once a tick against the
+  blended car. The centre is blended between its last two ticks instead.
+
+Not done yet: wheel spin and steering change once a tick; the lights on
+car models (headlight and tail light sources, not the glow billboards) are
+unchecked and may need the same camera-position fix as the paint
+reflections; UI movie tracks that add to values
+(ITC-Recomp's pause sub-menu arrow fix) aren't ported.
+
 ## Known data
 
 | Address | What | Notes |
@@ -246,6 +524,13 @@ doubles game speed. Functions that load the step as a float constant from
 | `0x826B588C` | Boot movie id table | Index at `0x826B58A8`; skippable flag at `0x826B58A4`. |
 | `0x826B51FC` | Light set pointer | Read by `sub_820C8F10`. |
 | `0x820029C4`, `0x820029C0` | 1/30 and 1/60 | Float step constants (see "Fixed time step"). |
+| `0x825F17E8` | The cars' step length | Float, 1/60 (`.data`). Passed to `Vehicle::Step` twice a tick by `Vehicle::Tick`, and read by `Vehicle::ApplyControls` and a leaf at `0x820BFF54`. Not changed by the subtick code. |
+| `0x826B5810` | Control record table | One pointer per car index to its control record (5 words; see `Vehicle::ApplyControls`). |
+| `0x826B5838` | Input tables | `[+0]` + pad x 120 + 0x1F7C0: the abstract input ids `PlayerControls::Build` queries. |
+| `0x820029B8` | Float | `Vehicle::Tick` stores speed times it at car+6160. |
+| car+0x930, +0x934 | Step length and its inverse | Written by `Vehicle::SetStepLength` each step. |
+| car+0x940 | `Vehicle::Step` inner iterations | 10, set in `sub_820B0DD0`. |
+| car+0x958 | `sub_820B1678`'s ramp counter | 0 to 30. |
 | `0x82000A20` | 1.0f | w of the light positions `Lights::FindNearest` writes. |
 | `0x825F0A84`, `0x825F0A88` | `BUILD.DAT`, `BUILD_CRS.DAT` file handles | Opened by `Archive::Init`. |
 | `0x825F0A90`, `0x825F0AA0` | Built-in copies of the `BUILD.TOC` and `BUILD_CRS.TOC` headers | Count (23009, 1359), two unknown words, `.DAT` size. Only the counts are read; adding archive entries needs these patched (`docs/game_data.md`). |

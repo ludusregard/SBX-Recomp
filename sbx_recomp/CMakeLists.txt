@@ -63,6 +63,14 @@ set(SBX_SOURCES
     src/hooks/patch_loader.cpp
     src/hooks/post_race.cpp
     src/hooks/unlock_cut_cars.cpp
+    src/subtick/car_transforms.cpp
+    src/subtick/frame_pacer.cpp
+    src/subtick/game_messages.cpp
+    src/subtick/input.cpp
+    src/subtick/input_weights.cpp
+    src/subtick/per_frame_logic.cpp
+    src/subtick/renderer_hooks.cpp
+    src/tick_rate/tick_rate.cpp
     src/resources/app.rc
 )
 # Hooks in src/hooks/ override generated functions (docs/functions.md).

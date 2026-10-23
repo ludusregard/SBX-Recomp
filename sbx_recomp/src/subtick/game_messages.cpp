@@ -1,0 +1,141 @@
+#include "subtick/game_messages.h"
+
+#include "guest.h"
+#include "subtick/car_transforms.h"
+#include "subtick/per_frame_logic.h"
+
+#include <rex/cvar.h>
+
+#include <thread>
+#include <vector>
+
+REXCVAR_DECLARE(bool, subtick);
+
+namespace subtick {
+
+namespace {
+
+// The dispatcher object (r3 of sub_82106478).
+constexpr uint32_t kHandlersOffset = 0;  // array of handler pointers
+constexpr uint32_t kHandlerCountOffset = 200;
+constexpr uint32_t kQueueOffset = 204;  // ring of messages
+constexpr uint32_t kQueueCountOffset = 804;
+constexpr uint32_t kQueueReadIndexOffset = 808;
+constexpr uint32_t kQueueCapacity = 50;
+constexpr uint32_t kMessageBytes = 12;  // id and two arguments
+
+// Return addresses of the dispatcher's two calls, as the original sets them.
+constexpr uint32_t kPickHandlerReturn = 0x82106500;
+constexpr uint32_t kHandlerCallReturn = 0x82106518;
+
+enum MessageId : uint32_t {
+  kUpdate = 0,
+  kDraw = 1,
+};
+
+bool g_render_only_pass = false;
+std::thread::id g_main_thread{};  // the thread passes are paced on
+bool g_race_draw_step_seen = false;  // during the current logic pass
+bool g_in_race = false;              // as of the last logic pass
+uint64_t g_passes = 0;
+
+// Delivers one message to each handler.
+void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t message) {
+  uint32_t handler_count = guest::LoadU32(base, dispatcher + kHandlerCountOffset);
+  for (uint32_t i = 0; i < handler_count; i++) {
+    // sub_82106410 picks the object that handles this message for handler
+    // i; its first virtual method takes it.
+    ctx.r3.u64 = guest::LoadU32(base, dispatcher + kHandlersOffset + 4 * i);
+    ctx.r4.u64 = message;
+    ctx.lr = kPickHandlerReturn;
+    sub_82106410(ctx, base);
+    uint32_t object = guest::LoadU32(base, ctx.r3.u32);
+    uint32_t method = guest::LoadU32(base, guest::LoadU32(base, object));
+    ctx.r3.u64 = object;
+    ctx.r4.u64 = dispatcher;
+    ctx.lr = kHandlerCallReturn;
+    REX_CALL_INDIRECT_FUNC(method);
+  }
+}
+
+void DispatchMessages(PPCContext& ctx, uint8_t* base, uint32_t dispatcher) {
+  // The original's frame (stwu r1,-144(r1)), with the message copied to +80.
+  guest::StackFrame frame(ctx, 144);
+  uint32_t message = frame.Local(80);
+  while (guest::LoadU32(base, dispatcher + kQueueCountOffset) != 0) {
+    // Pop the oldest message into the local copy.
+    uint32_t count = guest::LoadU32(base, dispatcher + kQueueCountOffset);
+    uint32_t read = guest::LoadU32(base, dispatcher + kQueueReadIndexOffset);
+    guest::StoreU32(base, dispatcher + kQueueCountOffset, count - 1);
+    guest::StoreU32(base, dispatcher + kQueueReadIndexOffset, read + 1);
+    uint32_t slot = dispatcher + kQueueOffset + (read % kQueueCapacity) * kMessageBytes;
+    for (uint32_t k = 0; k < kMessageBytes; k += 4) {
+      guest::StoreU32(base, message + k, guest::LoadU32(base, slot + k));
+    }
+    if (guest::LoadU32(base, message) == kUpdate && g_render_only_pass &&
+        std::this_thread::get_id() == g_main_thread) {
+      continue;  // render-only: the game doesn't advance
+    }
+    Deliver(ctx, base, dispatcher, message);
+  }
+}
+
+}  // namespace
+
+void GameMessages_OnPassFinished() {
+  if (g_render_only_pass) {
+    return;
+  }
+  // The pass that just ran was a logic pass: it decides whether we're in a
+  // race.
+  g_in_race = g_race_draw_step_seen;
+  g_race_draw_step_seen = false;
+}
+
+void GameMessages_SetRenderOnlyPass(bool render_only) {
+  g_main_thread = std::this_thread::get_id();
+  g_passes++;
+  g_render_only_pass = render_only;
+}
+
+bool GameMessages_IsRenderOnlyPass() {
+  return g_render_only_pass;
+}
+
+bool GameMessages_InRace() {
+  return g_in_race;
+}
+
+uint64_t GameMessages_PassNumber() {
+  return g_passes;
+}
+
+}  // namespace subtick
+
+// GameMessages::Dispatch: r3 = the dispatcher. Delivers each queued message
+// to every handler. Replaced (same steps as the original) whenever its
+// handlers need to be known or Update skipped; otherwise the original runs.
+extern "C" REX_FUNC(sub_82106478) {
+  REX_FUNC_PROLOGUE();
+  if (!REXCVAR_GET(subtick)) {
+    __imp__sub_82106478(ctx, base);
+    return;
+  }
+  subtick::DispatchMessages(ctx, base, ctx.r3.u32);
+}
+
+// Race::DrawStep: noted to tell races from menus.
+extern "C" REX_FUNC(sub_82159540) {
+  REX_FUNC_PROLOGUE();
+  subtick::g_race_draw_step_seen = true;
+  // The cars' matrices are blended between ticks for the step, so the camera
+  // built from them moves with the cars (car_transforms.cpp).
+  // Pass 0's view-projection for this frame first (render-only passes skip
+  // the Update that builds it), then the race overlays recorded with it
+  // (per_frame_logic.cpp), then the cars blended for the step.
+  subtick::CarTransforms_RebuildCamera(ctx, base);
+  subtick::PerFrameLogic_RecordRaceOverlays(ctx, base);
+  auto restores = subtick::CarTransforms_BlendAll(base);
+  __imp__sub_82159540(ctx, base);
+  subtick::CarTransforms_RestoreAll(base, restores);
+}

@@ -31,6 +31,21 @@ Codegen is clean: 15,963 functions, no unresolved branches or calls.
   (`src/hooks/cut_car_wheels.cpp`). Working in the garage. The wheel shop
   also offers them inch-ups (ECLI 3, the others 4); not yet tested.
 
+- Subtick (the `60fps` branch): frames between the game's 30 Hz ticks in
+  races (`--subtick`, `--max_fps`), the cars' controls fed input sampled
+  each frame and weighted per tick (`--subtick_input`,
+  `--subtick_input_sensitivity`), written into the control record so
+  replays play back 1:1. Car physics stays at 30 Hz and two steps a tick.
+  Cars, the camera, paint reflections, light glows, light trails and the
+  opponent marker are blended between ticks. The race overlays (opponent
+  marker, tire smoke) draw on every frame, paused or not. Open: wheel spin
+  and steering step per tick; check the light sources on car models for the
+  same camera-position shake the paint reflections had. Off by default (`src/subtick/`; "Subtick" in
+  `docs/functions.md`).
+- Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`,
+  `src/tick_rate/`): a true 60 Hz tick, parked ("Tick rate experiments" in
+  `docs/functions.md`).
+
 ## Mod tools
 
 - `mod_tools/car_specs.py`: the car specs to an Excel workbook and back,
