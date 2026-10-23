@@ -59,9 +59,11 @@ include(generated/rexglue.cmake)
 # Sources
 set(SBX_SOURCES
     src/main.cpp
-    src/hooks/mod_loader.cpp
+    src/hooks/cut_car_wheels.cpp
+    src/hooks/patch_loader.cpp
     src/hooks/post_race.cpp
     src/hooks/unlock_cut_cars.cpp
+    src/resources/app.rc
 )
 # Hooks in src/hooks/ override generated functions (docs/functions.md).
 

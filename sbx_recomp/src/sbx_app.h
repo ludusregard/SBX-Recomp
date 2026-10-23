@@ -6,7 +6,7 @@
 
 #include <rex/rex_app.h>
 
-#include "hooks/mod_loader.h"
+#include "hooks/patch_loader.h"
 
 class SbxApp : public rex::ReXApp {
  public:
@@ -14,12 +14,12 @@ class SbxApp : public rex::ReXApp {
 
   static std::unique_ptr<rex::ui::WindowedApp> Create(
       rex::ui::WindowedAppContext& ctx) {
-    return std::unique_ptr<SbxApp>(new SbxApp(ctx, "sbx",
+    return std::unique_ptr<SbxApp>(new SbxApp(ctx, "Shutokou Battle X",
         PPCImageConfig));
   }
 
-  // MOD_DATA is looked for in the game data root (src/hooks/mod_loader.cpp).
-  void OnPostSetup() override { mod_loader::SetGameDataRoot(game_data_root()); }
+  // PATCH_DATA is looked for in the game data root (src/hooks/patch_loader.cpp).
+  void OnPostSetup() override { patch_loader::SetGameDataRoot(game_data_root()); }
 
   // Override virtual hooks for customization:
   // void OnPostInitLogging() override {}

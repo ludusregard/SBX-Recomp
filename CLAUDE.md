@@ -1,101 +1,80 @@
 # Working on this repo
 
-A static recompilation of Shutoko Battle X (Xbox 360) built on ReXGlue
-(`rexglue-sdk/`, a submodule pinned to v0.10.0; our changes to it go in
-`patches/rexglue-sdk/`, applied at configure time, none yet).
-`docs/functions.md` is the reference: what's known about the game's code
-(names, addresses, data) and which functions are overridden.
-`docs/game_data.md` is the game's data: the archives, how they're loaded,
-and the formats inside. `docs/codegen.md` is how the recompiled code is
-generated: function hints, the codegen loop, what was found and fixed, and
-the Windows build's gotchas. `docs/porting-from-itc.md` is how this project relates to
-ITC-Recomp (the recompilation of Import Tuner Challenge, the US release of
-the same game) and how its findings are matched to SBX's code.
-Read the relevant section before changing anything, and keep it up to
-date as you learn things.
+A static recompilation of Shutoko Battle X (Xbox 360) on ReXGlue
+(`rexglue-sdk/`, submodule pinned to v0.10.0; SDK changes go in
+`patches/rexglue-sdk/`, none yet).
 
-## Rules from the user
+## Docs
 
-- Only search inside this repo. Ask for the location of anything outside it.
-- ITC-Recomp is a read-only reference: never modify a checkout of it. Ask
-  where it is when it's needed; don't write its location into the repo.
-- Paths in the repo are relative to the repo; no machine-specific paths
-  (drives, user folders) in code, docs or config.
-- Code comments and docs describe SBX on its own terms; ITC-Recomp is only
-  named where the origin matters (`docs/porting-from-itc.md`).
-- Keep this repo's layout, naming and doc conventions the same as
-  ITC-Recomp's, so the two projects read alike.
-- American English (color, not colour; gray, not grey) and plain,
-  straightforward wording in code, comments, docs and commit messages:
-  short and clear beats thorough and wordy.
-- Commit often. Never revert or `git checkout` uncommitted work without
-  committing it first.
-- Don't create branches (local or pushed) without asking the user first;
-  work on the branch you're on unless they say otherwise.
-- Ask before pushing to `main` or pushing tags.
-- Don't start background agents or scheduled runs unless the user asks.
+Read the relevant doc before making changes; update it as you learn.
+
+- `docs/status.md`: what works, fixes and experiments (with their flags),
+  what's next. Check when a task depends on it; update when one changes.
+- `docs/functions.md`: known functions, addresses, data, overrides. Check
+  before naming, hooking or overriding a function; add every function or
+  address worked out.
+- `docs/game_data.md`: archives, how they load, data formats. Check
+  before work on file loading, assets or mods; add every format detail
+  worked out.
+- `docs/codegen.md`: how the code is generated and the Windows build's
+  gotchas. Check for codegen or build problems; update when either changes.
+- `docs/build_run.md`: building, running and testing.
+- `docs/audio.md`: XACT and XAudio, the sound banks, and the code that
+  loads them. Check before work on sound; add what's worked out.
+- `docs/rexglue-removal.md`: ITC-Recomp's plan for a port without
+  ReXGlue, kept as a reference (its addresses are ITC's). Check before
+  planning any native subsystem.
+- `docs/modding-plan.md`: the plan for mod support (patch and addon
+  loaders, adding cars). Check before work on mod loading or new content.
+- `docs/cut_car_wheels.md`: suggested stock tire sizes and wheel
+  positions for the cut cars. Check before changing their wheels or specs.
+- `mod_tools/README.md`: the data tools (car specs workbook, cut car
+  wheels, the Blender add-on). Check before writing a new data tool.
+- `mod_tools/blender_plugin/README.md` and `PLAN.md`: the Blender add-on
+  (part import and export): how to build, use and test it, and how it was
+  built. The format code for parts, nodes and XPR2s is
+  `mod_tools/blender_plugin/sbx_formats/`. Check before work on the add-on
+  or part writing.
+- `docs/porting-from-itc.md`: how SBX relates to ITC-Recomp (Import Tuner
+  Challenge, the US release), matching its functions to SBX, and the last
+  reviewed ITC-Recomp commit. Check before porting anything from it.
+
+## Session start
+
+ALWAYS check ITC-Recomp for changes since "Last reviewed" in
+`docs/porting-from-itc.md`:
+
+1. Fetch and fast-forward the checkout if it's behind.
+2. Read `git log` since that commit, and the diffs of its `CLAUDE.md` and
+   `docs/*.md`.
+3. Report new or renamed functions, new fixes or features, and changed
+   conventions, each with its commit.
+4. For each new function or fix, ask whether to port it (SBX address via
+   `itc_to_sbx_functions.tsv` / `port_addrs.py`).
+5. Update "Last reviewed" to the new commit.
+
+## Rules
+
+- **NEVER edit or commit in the ITC-Recomp checkout.** Fetching and
+  fast-forwarding it is the only exception.
+- **NEVER port anything from ITC-Recomp without the user's approval.**
+- **NEVER put machine-specific paths** (drives, user folders, the
+  ITC-Recomp location) in code, docs or config. Paths are relative to
+  the repo.
+- **NEVER revert or `git checkout` uncommitted work** without committing
+  it first. Commit often.
+- **ALWAYS check `git diff` before committing** a doc another session may
+  have edited.
+- **ASK before** creating a branch, pushing to `main` or pushing tags.
+  Otherwise stay on the current branch.
+- **ASK before** starting background agents or scheduled runs.
+- **Find problems with logs, not guesses:** add logging, have the user run
+  the game, read the log, fix what it shows.
+- Only search inside this repo; ask for the location of anything outside it.
+- Docs and comments describe SBX on its own terms; name ITC-Recomp only
+  where the origin matters.
+- Follow ITC-Recomp's layout, naming and doc conventions unless a doc
+  here says otherwise.
+- American English (color, gray), plain and short, in code, comments,
+  docs and commit messages.
 - No `-march=native`.
-- Find problems with logs, not guesses: add logging, have the user run the
-  game, read the log, then fix what it shows.
-
-## Build and run
-
-On Windows, from `sbx_recomp/`:
-
-```bat
-codegen.bat      rem configure, build rexglue, recompile the XEX, configure again
-build.bat        rem out\build\win-amd64-relwithdebinfo\sbx.exe
-run.bat          rem the game, against ..\assets, on the emulated GPU
-run-debug.bat    rem the same with debug logging
-```
-
-- `codegen.bat` and `build.bat` log to `out\codegen.log` and
-  `out\build.log` and stop with the window open on a failure.
-- The game files live in `assets/` (the user's copy, not committed). The
-  manifest reads the retail `assets/default.xex`; the Python tools need the
-  decrypted copy, `assets/default.xex.decrypt`.
-- After a fresh clone or a submodule update, `setup_repo.bat` (or
-  `python sbx_recomp/tools/fix_symlink_stubs.py .`) replaces the SDK's
-  symlink stubs with real files; without it the SDK build fails.
-- The user runs the game: they play, quit, and say what they saw. Logs go
-  to `logs/` next to `sbx.exe`.
-- `generated/` is the recompiled code, regenerated by every build when its
-  inputs change. Find a function with
-  `findstr /n "DEFINE_REX_FUNC(sub_XXXXXXXX)" generated\default\*.cpp`, or
-  a call site with `findstr /m "lr = 0xXXXXXXXX;" generated\default\*.cpp`.
-  Override a function by defining `extern "C" REX_FUNC(sub_XXXXXXXX)` in
-  `src/` and calling `__imp__sub_XXXXXXXX`; only one override per function
-  can exist, so search `src/` for it first. To change a function's code,
-  copy its generated body into an override and edit it there
-  (`src/hooks/post_race.cpp`): edits in `generated/` are overwritten.
-- "Call to invalid or unregistered function at guest address X" at run
-  time: add `0xX = {}` under `[entrypoint.functions]` in
-  `sbx_manifest.toml` and rebuild (`docs/codegen.md`).
-
-## Status (`main`, 2026-10-17)
-
-Boots and runs on Windows on the emulated GPU (`--gpu_plugin=xenos`).
-Codegen is clean: 15,963 functions, no unresolved branches or calls.
-
-Fixes:
-
-- The black screen after quest races: `sub_8218C240`, the post-race
-  check, waits 1 cycle instead of 60 (`src/hooks/post_race.cpp`,
-  `--post_race_check_fix`, on by default).
-
-Experiments:
-
-- The cut cars (ECLI, S30, L86, T86) are offered from the start of a new
-  game: their bits in the save's car unlock bits are set after
-  `sub_82113FB0` and `sub_82114278` (`src/hooks/unlock_cut_cars.cpp`,
-  `--unlock_cut_cars`, on by default). Their prices are still 999999.
-
-Known functions: everything listed in `docs/functions.md` was matched from
-ITC-Recomp's findings (`docs/porting-from-itc.md`).
-
-Not done yet:
-
-- Port more of the fixes and features ITC-Recomp has, starting with game
-  compatibility. Its native Vulkan renderer, native audio and frame
-  interpolation are on hold.
-- A CI build.

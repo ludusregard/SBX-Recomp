@@ -1,8 +1,9 @@
-// Loads archive entries from loose files in MOD_DATA instead of the .DAT
-// archives, so game files can be replaced without rebuilding BUILD.DAT.
+// The patch loader: loads archive entries from loose files in PATCH_DATA
+// instead of the .DAT archives, so game files can be replaced without
+// rebuilding BUILD.DAT.
 //
-//   assets/MOD_DATA/BUILD/TXR/BUILD/<id>.<any extension>       BUILD ids
-//   assets/MOD_DATA/BUILD/TXR/BUILD_CRS/<id>.<any extension>   BUILD_CRS ids
+//   assets/PATCH_DATA/BUILD/TXR/BUILD/<id>.<any extension>       BUILD ids
+//   assets/PATCH_DATA/BUILD/TXR/BUILD_CRS/<id>.<any extension>   BUILD_CRS ids
 //
 // A file is named by its archive id, as GUT Archive Tools names its dumps
 // (00000072.bin is the car specs); the extension doesn't matter. In
@@ -22,10 +23,12 @@
 //
 // The .TOC and .DAT files on disk aren't changed. Only existing ids can be
 // replaced: adding ids needs the entry counts built into the XEX patched.
+// New content goes in ADDON_DATA, for the addon loader (docs/modding-plan.md),
+// which isn't built yet.
 //
-// --mod_loader=false turns it off.
+// --patch_loader=false turns it off.
 
-#include "hooks/mod_loader.h"
+#include "hooks/patch_loader.h"
 
 #include "guest.h"
 
@@ -40,8 +43,8 @@
 #include <unordered_map>
 #include <vector>
 
-REXCVAR_DEFINE_BOOL(mod_loader, true, "SBX",
-                    "Load archive entries from MOD_DATA/BUILD/TXR/ (experimental)");
+REXCVAR_DEFINE_BOOL(patch_loader, true, "SBX",
+                    "Load archive entries from PATCH_DATA/BUILD/TXR/ (experimental)");
 
 namespace {
 
@@ -95,7 +98,7 @@ std::optional<uint32_t> ParseId(const std::string& name, bool crs) {
 
 void Scan(std::vector<Override>& found, bool crs) {
   const std::string folder = crs ? "BUILD_CRS" : "BUILD";
-  auto dir = g_game_data_root / "MOD_DATA" / "BUILD" / "TXR" / folder;
+  auto dir = g_game_data_root / "PATCH_DATA" / "BUILD" / "TXR" / folder;
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) {
     return;
@@ -112,43 +115,43 @@ void Scan(std::vector<Override>& found, bool crs) {
   for (const auto& file : files) {
     auto name = AsciiName(file);
     if (!name) {
-      REXLOG_WARN("mod_loader: skipped a file in MOD_DATA/BUILD/TXR/{}: not an ASCII name",
+      REXLOG_WARN("patch_loader: skipped a file in PATCH_DATA/BUILD/TXR/{}: not an ASCII name",
                   folder);
       continue;
     }
     auto id = ParseId(*name, crs);
     if (!id) {
-      REXLOG_WARN("mod_loader: skipped {}/{}: not an archive id", folder, *name);
+      REXLOG_WARN("patch_loader: skipped {}/{}: not an archive id", folder, *name);
       continue;
     }
     uint64_t size = std::filesystem::file_size(file, ec);
     if (ec || size > UINT32_MAX) {
-      REXLOG_WARN("mod_loader: skipped {}/{}: can't read its size", folder, *name);
+      REXLOG_WARN("patch_loader: skipped {}/{}: can't read its size", folder, *name);
       continue;
     }
     auto same = std::find_if(found.begin(), found.end(),
                              [&](const Override& o) { return o.id == *id; });
     if (same != found.end()) {
-      REXLOG_WARN("mod_loader: skipped {}/{}: id {} is already replaced by {}", folder,
+      REXLOG_WARN("patch_loader: skipped {}/{}: id {} is already replaced by {}", folder,
                   *name, *id, same->path);
       continue;
     }
-    found.push_back({*id, uint32_t(size), "MOD_DATA\\BUILD\\TXR\\" + folder + "\\" + *name});
+    found.push_back({*id, uint32_t(size), "PATCH_DATA\\BUILD\\TXR\\" + folder + "\\" + *name});
   }
 }
 
 }  // namespace
 
-namespace mod_loader {
+namespace patch_loader {
 
 void SetGameDataRoot(const std::filesystem::path& root) { g_game_data_root = root; }
 
-}  // namespace mod_loader
+}  // namespace patch_loader
 
 // Archive::Init: reads both TOCs, then the overrides are applied to them.
 extern "C" REX_FUNC(sub_8209E348) {
   __imp__sub_8209E348(ctx, base);
-  if (!REXCVAR_GET(mod_loader) || g_game_data_root.empty()) {
+  if (!REXCVAR_GET(patch_loader) || g_game_data_root.empty()) {
     return;
   }
 
@@ -171,7 +174,7 @@ extern "C" REX_FUNC(sub_8209E348) {
   uint32_t strings = ctx.r3.u32;
   ctx.r3.u64 = result;
   if (strings == 0) {
-    REXLOG_ERROR("mod_loader: couldn't allocate {} bytes for the paths; no overrides", total);
+    REXLOG_ERROR("patch_loader: couldn't allocate {} bytes for the paths; no overrides", total);
     return;
   }
 
@@ -191,7 +194,7 @@ extern "C" REX_FUNC(sub_8209E348) {
     guest::StoreU32(base, entry + 4, o.size);  // Stored size.
     guest::StoreU32(base, entry + 8, 0);       // Decompressed size: stored as is.
 
-    REXLOG_INFO("mod_loader: id {} from {} ({} bytes; was {} stored, {} unpacked)", o.id,
+    REXLOG_INFO("patch_loader: id {} from {} ({} bytes; was {} stored, {} unpacked)", o.id,
                 o.path, o.size, stored, unpacked);
     g_overrides.emplace(o.id, o);
   }
@@ -201,7 +204,7 @@ extern "C" REX_FUNC(sub_8209E348) {
 extern "C" REX_FUNC(sub_8209D9F8) {
   auto it = g_overrides.find(ctx.r3.u32);
   if (it != g_overrides.end()) {
-    REXLOG_INFO("mod_loader: loading id {} from {}", it->first, it->second.path);
+    REXLOG_INFO("patch_loader: loading id {} from {}", it->first, it->second.path);
     ctx.r3.u64 = it->second.guest_path;
     return;
   }

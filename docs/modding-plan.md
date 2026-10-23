@@ -1,7 +1,7 @@
 # Modding plan
 
 A plan for mod support beyond today's file replacement, kept for later
-reference. Nothing here is built yet except the mod loader. Function names
+reference. Nothing here is built yet except the patch loader. Function names
 and data formats are in `docs/functions.md` and `docs/game_data.md`.
 
 ## Two loaders
@@ -9,15 +9,15 @@ and data formats are in `docs/functions.md` and `docs/game_data.md`.
 Replacing something that exists and adding something new are different
 problems, so they get separate loaders on a shared base.
 
-**Patch loader** (today's `src/hooks/mod_loader.cpp`, renamed later):
+**Patch loader** (`src/hooks/patch_loader.cpp`, `assets/PATCH_DATA/`):
 replaces existing archive ids with loose files. It doesn't need to know
 what the files mean, and it already works for anything from one file to
 the whole Restored patch. It uses the game's own loose-file support: the
 TOC entry is changed in memory after `Archive::Init`, and
 `Archive::FindLooseFile` returns the file's path.
 
-**Addon loader**: new content loaded beside the base game, like DLC. Two
-layers:
+**Addon loader** (`assets/ADDON_DATA/`): new content loaded beside the
+base game, like DLC. Two layers:
 
 1. **Archive layer.** Each addon's files get ids in a virtual range above
    `BUILD_CRS` (24,368 and up), served by hooking `Archive::Load` and
@@ -30,7 +30,7 @@ layers:
    from the addon's manifest.
 
 Both loaders share one overlay layer that serves archive entries from
-loose files (most of `mod_loader.cpp` today), with their own on/off
+loose files (most of `patch_loader.cpp` today), with their own on/off
 setting each.
 
 ## Design rules
@@ -46,10 +46,9 @@ setting each.
   save. The stock save stays untouched and compatible with the original
   game and Import Tuner Challenge. A save that references a missing addon
   must still load (skip the car, or fall back to a stock one).
-- **Folder layout** to settle before the patch loader has many users.
-  Keeping `MOD_DATA/BUILD/TXR/BUILD/` for patches moves nothing (the
-  Restored submodule lives there). `MOD_DATA/PATCH/...` and
-  `MOD_DATA/ADDONS/<name>/` read more clearly but move the submodule.
+- **Folder layout:** patches in `assets/PATCH_DATA/`, laid out like the
+  game's files (`PATCH_DATA/BUILD/TXR/BUILD/`, where the Restored submodule
+  lives); addons in `assets/ADDON_DATA/<name>/`.
 
 ## Example: more cars
 
@@ -75,7 +74,7 @@ In stages:
    aren't among them, so a slot borrows or replaces an existing model
    (once the car id to model mapping is known).
 2. **Car registry in the addon loader.** A mod car is a folder, e.g.
-   `MOD_DATA/ADDONS/<name>/CARS/<car>/`, with a manifest (TOML or JSON),
+   `ADDON_DATA/<name>/CARS/<car>/`, with a manifest (TOML or JSON),
    its spec record, models, textures and name strings. The recomp gives it
    an id from 72 up and serves it through hooks:
    - **Specs:** extend the table in memory after load.
@@ -99,8 +98,8 @@ goes through them, and play through the menus and a race.
 
 ## Order of work
 
-1. The patch/addon split as a refactor of `mod_loader.cpp` (shared
-   overlay layer, two settings), with the folder layout decided.
+1. The patch/addon split as a refactor of `patch_loader.cpp` (shared
+   overlay layer, two settings).
 2. The addon archive layer (virtual ids) with an empty registry, tested
    with a file no stock code asks for.
 3. The tracing above.

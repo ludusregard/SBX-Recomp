@@ -20,17 +20,34 @@ Codegen is clean: 15,963 functions, no unresolved branches or calls.
   game: their bits in the save's car unlock bits are set after
   `sub_82113FB0` and `sub_82114278` (`src/hooks/unlock_cut_cars.cpp`,
   `--unlock_cut_cars`, on by default). Their prices are still 999999.
-- Mod loader: archive entries are read from loose files in `assets/MOD_DATA/BUILD/TXR/BUILD/`
-  and `assets/MOD_DATA/BUILD/TXR/BUILD_CRS/` named by id with any extension.
+- Patch loader: archive entries are read from loose files in `assets/PATCH_DATA/BUILD/TXR/BUILD/`
+  and `assets/PATCH_DATA/BUILD/TXR/BUILD_CRS/` named by id with any extension.
   Example: `00000072.bin` and `00000072.dat` are both id `00000072` and would both be valid. 
-  (`src/hooks/mod_loader.cpp`, `--mod_loader`, on by default; see
-  `docs/game_data.md`, "Mod data"). Not yet tested.
+  (`src/hooks/patch_loader.cpp`, `--patch_loader`, on by default; see
+  `docs/game_data.md`, "Patch data"). Not yet tested.
+- Cut car wheels: the ECLI gets its own stock wheel instead of AD00, and
+  the L86, S30 and T86 the BOSS00's wheel (`--cut_car_wheels`), or the
+  LORRY's steel wheels (`--cut_car_steelies`); both on by default
+  (`src/hooks/cut_car_wheels.cpp`). Working in the garage. The wheel shop
+  also offers them inch-ups (ECLI 3, the others 4); not yet tested.
+
+## Mod tools
+
+- `mod_tools/car_specs.py`: the car specs to an Excel workbook and back,
+  byte for byte.
+- The Blender add-on (`mod_tools/blender_plugin/`, 1.0.0): imports cars
+  and parts, exports edited parts for `assets/PATCH_DATA/`
+  (`mod_tools/blender_plugin/README.md`).
+- `mod_tools/cut_car_wheels.py`: the cut cars' wheel baselines
+  (`docs/cut_car_wheels.md`). Not yet tested in game.
 
 ## Docs
 
 - `docs/functions.md`: named functions, mostly matched from ITC-Recomp's
   findings (`docs/porting-from-itc.md`), plus the data loading code.
 - `docs/game_data.md`: the archives and data formats.
+- `docs/modding-plan.md`: the patch and addon loaders, adding cars.
+- `docs/cut_car_wheels.md`: the cut cars' wheel baselines.
 
 ## Not done yet
 

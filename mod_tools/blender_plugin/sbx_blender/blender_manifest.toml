@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "sbx_parts"
+version = "1.0.0"
+name = "SBX Part Tools"
+tagline = "Import and export Shutoko Battle X part files (car models)"
+maintainer = "SBX Recomp"
+type = "add-on"
+
+blender_version_min = "5.2.0"
+
+# Add-ons that use Blender's Python API are GPL (Blender's terms).
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Read part, node and XPR2 files from the game data, write part files"

@@ -1,7 +1,9 @@
 # Game files (copyrighted, supply your own copy).
-# assets/MOD_DATA/BUILD/TXR/BUILD/MOD_DATA lets you override BUILD.DAT files with your own.
+# assets/PATCH_DATA/ replaces archive files with your own (the patch loader);
+# assets/ADDON_DATA/ is for new content (the addon loader, not built yet).
 /assets/*
-!/assets/MOD_DATA/
+!/assets/PATCH_DATA/
+!/assets/ADDON_DATA/
 
 # Build output
 /sbx_recomp/out/
@@ -21,3 +23,6 @@
 .vscode/
 __pycache__/
 rexglue-sdk
+
+# Microsoft Excel temporary/lock files
+~$*

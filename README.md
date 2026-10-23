@@ -12,10 +12,15 @@ Built with assistance of Claude with manual review and testing.
 
 - **Fix for the black screen after quest races** (on by default;
   `--post_race_check_fix=false` turns it off).
-- **Mod loader**: game archive files are replaced by loose files in
-  `assets/MOD_DATA/` (on by default; `--mod_loader=false` turns it off).
-- **Shutoko Battle X Restored** archive files, loaded through the mod
-  loader from a submodule in `assets/MOD_DATA/BUILD/TXR/BUILD/`.
+- **Patch loader**: game archive files are replaced by loose files in
+  `assets/PATCH_DATA/` (on by default; `--patch_loader=false` turns it off).
+- **Shutoko Battle X Restored** archive files, loaded through the patch
+  loader from a submodule in `assets/PATCH_DATA/BUILD/TXR/BUILD/`.
+- **Cut cars**: the ECLI, S30, L86 and T86 are offered from the start of a
+  new game (`--unlock_cut_cars=false` turns it off), and come on their own
+  stock wheels instead of AD00 rims: the ECLI its own, the L86, S30 and T86
+  the LORRY's steel wheels (`--cut_car_steelies=false` gives them the
+  BOSS00's wheels; `--cut_car_wheels=false` turns it all off).
 
 ## Requirements
 
@@ -25,8 +30,8 @@ Built with assistance of Claude with manual review and testing.
 ## Install
 
 Not packaged yet; build it from source (below). The game's files go in
-`assets/` (`default.xex` and `DATA/`); `assets/MOD_DATA/` is part of this
-repo.
+`assets/` (`default.xex` and `DATA/`); `assets/PATCH_DATA/` (replacements)
+and `assets/ADDON_DATA/` (new content, not used yet) are part of this repo.
 
 ## Running it
 
@@ -78,5 +83,13 @@ files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo/sbx.exe`.
 - [docs/porting-from-itc.md](docs/porting-from-itc.md): how ITC-Recomp's
   findings are matched to this game's code.
 - [docs/build_run.md](docs/build_run.md): info on building, running and testing.
+- [docs/audio.md](docs/audio.md): the sound banks and the code that loads
+  them.
+- [docs/modding-plan.md](docs/modding-plan.md): the plan for mod support
+  (the patch and addon loaders, adding cars).
+- [docs/cut_car_wheels.md](docs/cut_car_wheels.md): stock wheel and tire
+  baselines for the cut cars.
 - [mod_tools/README.md](mod_tools/README.md): tools for editing the game's
   data files.
+- [mod_tools/blender_plugin/README.md](mod_tools/blender_plugin/README.md):
+  the Blender add-on for the game's car models.
