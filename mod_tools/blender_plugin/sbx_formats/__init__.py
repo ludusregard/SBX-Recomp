@@ -4,7 +4,7 @@ Plain Python and numpy, no Blender. One module per job:
 
     binary.py      big-endian helpers, the Record base
     layout.py      field tables of the PART records
-    node.py        NODE files (read; raw write)
+    node.py        NODE files (read; move and add nodes)
     streams.py     vertex streams
     strips.py      triangle strips
     part_model.py  the in-memory PART model
@@ -13,9 +13,11 @@ Plain Python and numpy, no Blender. One module per job:
     decode.py      the decoded view: positions, normals, UVs, triangles
     cars.py        car blocks: part slots, the node frame, textures
     sidecar.py     what Blender can't hold, as JSON
-    shaders.py     the shader section and the shader library
+    shaders.py     the shader section, shader ids
     diff.py        field-by-field comparison of two PART files
-    encode.py      encoding edited shapes
+    encode.py      encoding edited and new shapes
+    compose.py     adding shapes, markers, shader pairs to a part
+    library.py     the shader library (every pair, with examples)
     xpr_textures.py  XPR2 textures: list and decode
 
 Format docs: docs/game_data.md ("Models", "Node files", "Part files").

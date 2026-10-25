@@ -1,7 +1,16 @@
 """NODE files (00 02 00 00): a model's nodes (parts or bones).
 
-Read only for now; the file is also kept as raw bytes so it writes back
-unchanged. Format: docs/game_data.md, "Node files". Big-endian.
+Kept as raw bytes so a file writes back unchanged; nodes can be moved
+(set_node_translation) and added (insert_node). Format:
+docs/game_data.md, "Node files". Big-endian.
+
+Layout (all 399 node files checked, the cars' and the ones embedded in
+parts): a 0x40-byte header, the node records (160 bytes each), then per
+node the translations, rotations and scales (16 bytes each), the world
+matrices, a second matrix and the inverse world matrices (64 bytes
+each), then a 16-byte tail. The header's +0x10 to +0x30 are those
+sections' offsets and the file's end; +0x34 holds 12 bytes not worked
+out, carried as they are.
 """
 
 import struct
@@ -118,3 +127,101 @@ def set_node_translation(raw, index, xyz):
 
 def node_by_name(nodes, name):
     return next((i for i, n in enumerate(nodes) if n.name == name), None)
+
+
+# Per-node sections after the records, in file order: (header word, bytes per node).
+NODE_ARRAYS = ((0x14, 16), (0x18, 16), (0x1C, 16), (0x20, 64), (0x24, 64), (0x28, 64))
+NODE_HEADER_SIZE = 0x40
+NODE_TAIL_SIZE = 16
+NAME_SIZE = 0x5C
+
+
+def split_NODE(raw):
+    """NODE bytes -> (header, [records], [[entries] per array], tail).
+
+    Raises ValueError when the file doesn't follow the layout above."""
+    d = bytes(raw)
+    count = u32(d, 4)
+    o = NODE_HEADER_SIZE
+    if u32(d, 0x10) != o:
+        raise ValueError('node records at 0x%X, expected 0x40' % u32(d, 0x10))
+    records = [d[o + NODE_SIZE * i:o + NODE_SIZE * (i + 1)] for i in range(count)]
+    o += NODE_SIZE * count
+    arrays = []
+    for word, size in NODE_ARRAYS:
+        if u32(d, word) != o:
+            raise ValueError('section at header +0x%X isn\'t where the layout puts it' % word)
+        arrays.append([d[o + size * i:o + size * (i + 1)] for i in range(count)])
+        o += size * count
+    if u32(d, 0x2C) != o or u32(d, NODE_END_FIELD) != o + NODE_TAIL_SIZE or len(d) < o + NODE_TAIL_SIZE:
+        raise ValueError('tail or end of the node file isn\'t where the layout puts it')
+    # The tail, and whatever follows the stated end (16 zero bytes in the
+    # cars' node files).
+    return d[:NODE_HEADER_SIZE], records, arrays, d[o:]
+
+
+def join_NODE(header, records, arrays, tail):
+    """The pieces of split_NODE -> NODE bytes, offsets and counts recomputed.
+
+    join_NODE(*split_NODE(raw)) == raw for every node file checked."""
+    count = len(records)
+    h = bytearray(header)
+    struct.pack_into('>I', h, 4, count)
+    if u32(header, 0x0C) == u32(header, 4):   # +0x0C is the count in every car and part node file
+        struct.pack_into('>I', h, 0x0C, count)
+    body = bytearray(b''.join(records))
+    o = NODE_HEADER_SIZE + len(body)
+    struct.pack_into('>I', h, 0x10, NODE_HEADER_SIZE)
+    for (word, size), entries in zip(NODE_ARRAYS, arrays):
+        if len(entries) != count:
+            raise ValueError('%d entries at header +0x%X for %d nodes' % (len(entries), word, count))
+        struct.pack_into('>I', h, word, o)
+        body += b''.join(entries)
+        o += size * count
+    struct.pack_into('>I', h, 0x2C, o)
+    struct.pack_into('>I', h, NODE_END_FIELD, o + NODE_TAIL_SIZE)
+    return bytes(h) + bytes(body) + bytes(tail)
+
+
+def insert_node(raw, at, copy_of, name=None):
+    """A NODE file's bytes with a copy of node copy_of inserted at index at.
+
+    The copy keeps every byte of the original node (record and arrays)
+    but its name, when one is given. Only for files whose nodes are all
+    top-level (every node file embedded in a part): a parent index would
+    need renumbering, so a file with parents is refused."""
+    header, records, arrays, tail = split_NODE(raw)
+    if not 0 <= copy_of < len(records) or not 0 <= at <= len(records):
+        raise ValueError('node %d copied to %d, of %d' % (copy_of, at, len(records)))
+    if u32(header, 8) != 0 or u32(header, 0x0C) != len(records):
+        raise ValueError('node file header not worked out for adding nodes')
+    if any(s32(r, 0x80) != -1 for r in records):
+        raise ValueError('only node files with top-level nodes can take new nodes')
+    rec = bytearray(records[copy_of])
+    if name is not None:
+        b = name.encode('ascii')
+        if len(b) >= 32:
+            raise ValueError('node name %r is longer than 31 characters' % name)
+        rec[0:NAME_SIZE] = b + b'\0' * (NAME_SIZE - len(b))
+    records.insert(at, bytes(rec))
+    for entries in arrays:
+        entries.insert(at, entries[copy_of])
+    return join_NODE(header, records, arrays, tail)
+
+
+def set_node_rotation_identity(raw, index):
+    """A NODE file's bytes with node index's rotation reset (quaternion 0, 0,
+    0, 1; world matrix rotation identity, inverse recomputed). Top-level
+    nodes only, as set_node_translation."""
+    d = bytearray(raw)
+    if s32(d, u32(d, 0x10) + index * NODE_SIZE + 0x80) != -1:
+        raise ValueError('node %d isn\'t top-level' % index)
+    r_off, world_off, inv_off = u32(d, 0x18), u32(d, 0x20), u32(d, 0x28)
+    struct.pack_into('>4f', d, r_off + 16 * index, 0.0, 0.0, 0.0, 1.0)
+    world = np.frombuffer(bytes(d), '>f4', 16, world_off + 64 * index).reshape(4, 4).astype(np.float64)
+    m = np.eye(4)
+    m[3, :3] = world[3, :3]
+    struct.pack_into('>16f', d, world_off + 64 * index, *map(float, m.ravel()))
+    inverse = np.linalg.inv(m.astype(np.float32).astype(np.float64))
+    struct.pack_into('>16f', d, inv_off + 64 * index, *map(float, inverse.ravel()))
+    return bytes(d)

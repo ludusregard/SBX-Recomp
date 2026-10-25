@@ -11,20 +11,12 @@ A part's shader section (docs/game_data.md, "Part files" and "Shaders"):
 Each shader starts with its magic (0x102A0E01 vertex, 0x102A0E00 pixel),
 its header size (the microcode's offset) and the microcode's size.
 
-The library collects every shader of every part, keyed by a hash of its
-microcode, so a material can later be given a shader another part uses.
-It's built from the game files, so it lives with them (under assets/),
-never in the repo:
-
-    python -m sbx_formats.shaders BUILD_OUT -o ../assets/shader_library.json
+The shader library (library.py) collects every pair of every part,
+keyed by the hashes of its shaders' microcode, so a material can use a
+pair another part has.
 """
 
-import argparse
-import base64
-import glob
 import hashlib
-import json
-import os
 import struct
 import sys
 
@@ -77,6 +69,21 @@ SHADER_IDS = {
 
 def shader_id(shader_hash_, kind):
     return SHADER_IDS.get(shader_hash_, '%s_new_%s' % (kind, shader_hash_))
+
+
+def pair_key(ids):
+    """'vs_02 + ps_03' -> 'vs_hash:ps_hash' (the library's key), or None."""
+    by_id = {v: k for k, v in SHADER_IDS.items()}
+    try:
+        vs, ps = [x.strip() for x in ids.split('+')]
+    except (AttributeError, ValueError):
+        return None
+    for x in (vs, ps):
+        if x not in by_id and '_new_' in x:
+            by_id[x] = x.split('_new_', 1)[1]
+    if vs not in by_id or ps not in by_id:
+        return None
+    return by_id[vs] + ':' + by_id[ps]
 
 
 PAIR_ENTRY_SIZE = 0x20
@@ -159,46 +166,10 @@ def join_section(header, pairs, rest=b''):
 
 # ---------------------------------------------------------------- library
 
-def build_library(folder, read_PART):
-    """Every shader of every .part in folder -> library dict."""
-    shaders, pairs = {}, {}
-    for path in sorted(glob.glob(os.path.join(folder, '*.part'))):
-        if os.path.getsize(path) == 0:
-            continue
-        with open(path, 'rb') as f:
-            part = read_PART(f.read())
-        name = os.path.splitext(os.path.basename(path))[0]
-        _, ps, _ = split_section(part.shaders_raw)
-        for p in ps:
-            for shader in (p.vs, p.ps):
-                h = shader_hash(shader)
-                e = shaders.setdefault(h, {'kind': shader_kind(shader), 'size': len(shader),
-                                           'parts': 0, 'first_part': name,
-                                           'raw': base64.b64encode(shader).decode()})
-                e['parts'] += 1
-            key = p.vs_hash + ':' + p.ps_hash
-            e = pairs.setdefault(key, {'vs': p.vs_hash, 'ps': p.ps_hash, 'parts': 0, 'first_part': name})
-            e['parts'] += 1
-    return {'format': 'sbx-shader-library', 'version': 1,
-            'hash': 'sha1 of the microcode, first 16 hex digits',
-            'shaders': shaders, 'pairs': pairs}
-
-
 def main(argv=None):
-    from .part_read import read_PART
-    ap = argparse.ArgumentParser(description='Build the shader library from the part files.')
-    ap.add_argument('folder', help='BUILD_OUT (the .part files)')
-    ap.add_argument('-o', '--output', required=True, help='library JSON (keep it under assets/)')
-    args = ap.parse_args(argv)
-    lib = build_library(args.folder, read_PART)
-    with open(args.output, 'w') as f:
-        json.dump(lib, f, indent=1, sort_keys=True)
-    kinds = {}
-    for s in lib['shaders'].values():
-        kinds[s['kind']] = kinds.get(s['kind'], 0) + 1
-    print('%s: %d shaders (%s), %d pairs' % (args.output, len(lib['shaders']),
-          ', '.join('%d %s' % (v, k) for k, v in sorted(kinds.items())), len(lib['pairs'])))
-    return 0
+    """The shader library moved to library.py (it now keeps examples)."""
+    from . import library
+    return library.main(argv)
 
 
 if __name__ == '__main__':

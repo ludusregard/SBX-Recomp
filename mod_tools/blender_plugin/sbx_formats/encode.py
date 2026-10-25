@@ -190,3 +190,64 @@ def encode_shape(original, positions, normals, uvs, uvs2, colors, draws, uvs3=No
     mb = original.material_block
     shape.material_block = MaterialBlock(mb.head, records, mb.tail)
     return shape
+
+
+# ---------------------------------------------------------------- new shapes
+
+# How much of the color/UV stream a layout carries: a new shape takes the
+# layout with the most, so every draw's shader finds what it reads.
+UV_RANK = {S.COLOR: 0, S.COLOR_UV: 1, S.COLOR_UV2: 2, S.COLOR_UV3: 3}
+
+
+def layout_of(shape):
+    return tuple(st.type if st is not None else None for st in shape.streams)
+
+
+def template_problem(shape):
+    """Why a shape can't lend its layout to a new shape, or None."""
+    if shape.unknown_streams():
+        return 'stream type 0x%02X not worked out' % shape.unknown_streams()[0].type
+    if int.from_bytes(shape.skin_raw[4:8], 'big') != 0x20:
+        return 'skinned (bones)'
+    if not np.allclose(shape.matrix, np.eye(4)):
+        return 'shape matrix isn\'t identity'
+    if shape.streams[0] is None or shape.streams[0].type not in UV_RANK:
+        return 'no color/UV stream in slot 0'
+    return None
+
+
+def choose_template(candidates, position_type=None):
+    """The shape a new shape copies its layout from.
+
+    candidates: shapes whose layout fits (the shapes the new shape's
+    materials came from, then the part's own). position_type: the
+    position stream type the part's shapes use (0x0B, or 0x05 in the
+    wheel parts); a candidate with it wins. Among those, the one whose
+    color/UV stream carries the most (UV_RANK), then one with normals.
+    Raises EncodeError if no candidate fits."""
+    ok = [s for s in candidates if template_problem(s) is None]
+    if not ok:
+        why = '; '.join(sorted({template_problem(s) for s in candidates})) or 'none given'
+        raise EncodeError('no shape to copy the stream layout from (%s)' % why)
+    if position_type is not None and any(s.streams[1] is not None and s.streams[1].type == position_type
+                                         for s in ok):
+        ok = [s for s in ok if s.streams[1] is not None and s.streams[1].type == position_type]
+    return max(ok, key=lambda s: (UV_RANK[s.streams[0].type], s.streams[2] is not None))
+
+
+def encode_new_shape(template, name_raw, positions, normals, uvs, uvs2, colors, draws, uvs3=None):
+    """A new shape in template's layout. name_raw: the 32-byte name.
+
+    Data the layout needs and the mesh lacks is filled in: a second UV map
+    is the first, a mesh without UVs gets zeros (the caller logs both);
+    normals are needed only when the layout has them."""
+    n = len(positions)
+    st0 = template.streams[0]
+    if st0 is not None and st0.type != S.COLOR:
+        if uvs is None:
+            uvs = np.zeros((n, 2))
+        if st0.type in (S.COLOR_UV2, S.COLOR_UV3) and uvs2 is None:
+            uvs2 = uvs
+    shape = encode_shape(template, positions, normals, uvs, uvs2, colors, draws, uvs3)
+    shape.set('name', name_raw)
+    return shape

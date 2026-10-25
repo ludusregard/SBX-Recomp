@@ -30,5 +30,9 @@ bool GameMessages_InRace();
 // Which main loop pass this is (counts up by one per pass).
 uint64_t GameMessages_PassNumber();
 
+// Any thread, for diagnostics: the current pass's number and type as of its
+// start, and whether the caller is the main thread.
+void GameMessages_PassFromAnyThread(uint64_t& number, bool& render_only, bool& main_thread);
+
 
 }  // namespace subtick

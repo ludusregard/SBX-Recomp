@@ -82,6 +82,12 @@ void FramePacer::OnTickReleased() {
   if (next < now) {
     next = now + kTickPeriod;
   }
+  // Nor run ahead of it: ticks released without waiting (--skip_intro's
+  // fast boot released ~1,100 at once) would otherwise put the next one
+  // that many periods away, and the game sat 36 s on the menu.
+  if (next > now + kTickPeriod) {
+    next = now + kTickPeriod;
+  }
   // Progress counts from when the tick was due, not when it was released, so
   // a late release doesn't stretch the interval.
   last_tick_ = std::min(now, next_tick_);

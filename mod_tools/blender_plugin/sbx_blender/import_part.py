@@ -26,7 +26,7 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
-from . import frames, properties
+from . import edit_part, frames, properties
 from .log import get_logger
 from .materials import MaterialMaker, TextureCache
 from .sbx_formats import cars, read_NODE_nodes, read_PART, shaders, sidecar
@@ -91,8 +91,11 @@ class Importer:
 
         root_name = '%s_%s' % (name, group) if group else name
         root = _empty(coll, root_name, parent, local, 'CUBE', 0.05)
-        properties.tag_part_root(root, name, group, dp.attach or '')
+        properties.tag_part_root(root, name, group, dp.attach or '',
+                                 os.path.basename(xpr_path) if xpr_path else '',
+                                 self.textures.names(xpr_path) or ())
 
+        shape_objs = {}
         morphs = morph_groups(dp.shapes)
         targets = {t for ts in morphs.values() for t in ts}
         for i, shape in enumerate(dp.shapes):
@@ -118,6 +121,7 @@ class Importer:
             obj.parent = root
             properties.tag_shape(obj, name, i, shape.name)
             obj['sbx_normals'] = properties.normals_fingerprint(obj.data)
+            shape_objs[shape.name] = obj
             entry['object'] = obj.name
             for d, m in zip(entry['draws'], mats):
                 d['material'] = m.name
@@ -130,6 +134,7 @@ class Importer:
             text.clear()
             text.write(body)
 
+        markers = {}
         for mk in dp.markers:
             if mk.position is None:
                 continue
@@ -137,7 +142,12 @@ class Importer:
             m[:3, 3] = np.asarray(mk.position) @ frames.NODE_TO_BLENDER
             e = _empty(coll, mk.name, root, m, 'SPHERE', 0.03)
             properties.tag_marker(e, name, mk.name)
+            markers[mk.name] = e
             self.counts['markers'] += 1
+        # Meter needles hang from the marker they turn about (sm_hari00_Shape
+        # from sm_hari), so rotating the marker swings the needle.
+        for shape_name, marker in edit_part.parent_needles(shape_objs, markers):
+            log.info('%s %s: under marker %s (its pivot)', name, shape_name, marker)
         self.counts['parts'] += 1
         return root
 

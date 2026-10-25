@@ -4,6 +4,10 @@ Registration and menus only; the work is in the other modules:
 
     import_part.py   game files -> Blender objects
     export_part.py   Blender objects -> part files
+    edit_part.py     adding shapes, markers and materials to parts
+    operators.py     the buttons for that; ui.py the panels (SBX tab)
+    sources.py       records, layouts, shader pairs (sidecars, library)
+    part_tree.py     a part's objects in Blender
     materials.py     display materials and XPR2 textures
     properties.py    the sbx_* tags that point back into the sidecar
     frames.py        game spaces to Blender's
@@ -19,7 +23,7 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import log
+from . import log, operators, ui
 from .log import get_logger
 
 _log = get_logger(__name__)
@@ -118,8 +122,10 @@ class SBX_OT_export_parts(bpy.types.Operator):
             self.report({'ERROR'}, 'Pick a folder')
             return {'CANCELLED'}
         try:
-            c = export_part.export_parts(context, folder, self.skip_identical, self.apply_modifiers)
-        except export_part.ExportError as e:
+            from .part_tree import object_mode
+            with object_mode():
+                c = export_part.export_parts(context, folder, self.skip_identical, self.apply_modifiers)
+        except (export_part.ExportError, export_part.SourceError) as e:
             _log.error('%s', e)
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
@@ -127,8 +133,11 @@ class SBX_OT_export_parts(bpy.types.Operator):
             _log.exception('export failed')
             self.report({'ERROR'}, 'SBX export failed: %s (see the log)' % e)
             return {'CANCELLED'}
-        self.report({'INFO'}, 'Wrote %(written)d parts (%(edited)d edited, %(identical)d identical to the '
-                              'game\'s, %(skipped)d skipped)' % c)
+        msg = ('Wrote %(written)d parts (%(edited)d edited, %(identical)d identical to the game\'s, '
+               '%(skipped)d skipped)' % c)
+        if c['added']:
+            msg += '; added: ' + '; '.join(c['added'][:6]) + (' ...' if len(c['added']) > 6 else '')
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -147,8 +156,22 @@ class SBX_FH_part(bpy.types.FileHandler):
 class SBX_preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
+    build_out: StringProperty(name='BUILD_OUT', subtype='DIR_PATH',
+                              description='The dumped BUILD folder (.part files), to build the shader library from')
+    library_path: StringProperty(name='Shader library', subtype='FILE_PATH',
+                                 description='Shader library file (empty: shader_library.json in the add-on\'s '
+                                             'folder). It lets a material use any shader pair the game has')
+
     def draw(self, context):
-        self.layout.label(text='Log file: ' + log.log_path())
+        from .sources import library_path
+        lay = self.layout
+        lay.label(text='Log file: ' + log.log_path())
+        lay.prop(self, 'build_out')
+        lay.prop(self, 'library_path')
+        row = lay.row()
+        row.operator('sbx.build_library', icon='FILE_REFRESH')
+        p = library_path()
+        row.label(text=('Library: ' + p) if os.path.exists(p) else 'No library yet')
 
 
 def _menu(self, context):
@@ -160,7 +183,8 @@ def _export_menu(self, context):
     self.layout.operator(SBX_OT_export_parts.bl_idname, text='SBX Parts (visible, .part)')
 
 
-_classes = (SBX_OT_import_part, SBX_OT_import_car, SBX_OT_export_parts, SBX_FH_part, SBX_preferences)
+_classes = (SBX_OT_import_part, SBX_OT_import_car, SBX_OT_export_parts, SBX_FH_part, SBX_preferences) + \
+    operators.classes + ui.classes
 
 
 def register():

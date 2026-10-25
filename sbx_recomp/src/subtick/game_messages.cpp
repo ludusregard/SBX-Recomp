@@ -1,11 +1,20 @@
 #include "subtick/game_messages.h"
 
+#include "debug/frame_state_diff.h"
 #include "guest.h"
+#include "hooks/title_screen.h"
 #include "subtick/car_transforms.h"
 #include "subtick/per_frame_logic.h"
 
-#include <rex/cvar.h>
+#ifdef SBX_NATIVE_RENDERER
+#include "native/textures.h"
+#endif
 
+#include <rex/cvar.h>
+#include <rex/logging.h>
+
+#include <atomic>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -28,6 +37,9 @@ constexpr uint32_t kMessageBytes = 12;  // id and two arguments
 constexpr uint32_t kPickHandlerReturn = 0x82106500;
 constexpr uint32_t kHandlerCallReturn = 0x82106518;
 
+constexpr uint32_t kDelegateInvoke = 0x8216F0F8;
+constexpr uint32_t kMemberDelegateInvoke = 0x8222E468;
+
 enum MessageId : uint32_t {
   kUpdate = 0,
   kDraw = 1,
@@ -38,6 +50,9 @@ std::thread::id g_main_thread{};  // the thread passes are paced on
 bool g_race_draw_step_seen = false;  // during the current logic pass
 bool g_in_race = false;              // as of the last logic pass
 uint64_t g_passes = 0;
+// For other threads (the native renderer's diagnostics): the pass as of its
+// start, packed as number * 2 + render-only.
+std::atomic<uint64_t> g_pass_any_thread{0};
 
 // Delivers one message to each handler.
 void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t message) {
@@ -51,10 +66,17 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t messa
     sub_82106410(ctx, base);
     uint32_t object = guest::LoadU32(base, ctx.r3.u32);
     uint32_t method = guest::LoadU32(base, guest::LoadU32(base, object));
+    // Delegates (Delegate::Invoke, MemberDelegate::Invoke) keep their real
+    // target at +8: named by it for --find_per_frame_state.
+    uint32_t target = (method == kDelegateInvoke || method == kMemberDelegateInvoke)
+                          ? guest::LoadU32(base, object + 8)
+                          : method;
     ctx.r3.u64 = object;
     ctx.r4.u64 = dispatcher;
     ctx.lr = kHandlerCallReturn;
+    debug::FrameStateDiff_Before(base);
     REX_CALL_INDIRECT_FUNC(method);
+    debug::FrameStateDiff_After(base, "message handler", target);
   }
 }
 
@@ -88,6 +110,11 @@ void GameMessages_OnPassFinished() {
   }
   // The pass that just ran was a logic pass: it decides whether we're in a
   // race.
+#ifdef SBX_NATIVE_RENDERER
+  if (g_in_race && !g_race_draw_step_seen) {
+    native::TextureCache_RaceLeft();  // frees the race's textures
+  }
+#endif
   g_in_race = g_race_draw_step_seen;
   g_race_draw_step_seen = false;
 }
@@ -96,6 +123,7 @@ void GameMessages_SetRenderOnlyPass(bool render_only) {
   g_main_thread = std::this_thread::get_id();
   g_passes++;
   g_render_only_pass = render_only;
+  g_pass_any_thread.store(g_passes * 2 + (render_only ? 1 : 0), std::memory_order_relaxed);
 }
 
 bool GameMessages_IsRenderOnlyPass() {
@@ -108,6 +136,13 @@ bool GameMessages_InRace() {
 
 uint64_t GameMessages_PassNumber() {
   return g_passes;
+}
+
+void GameMessages_PassFromAnyThread(uint64_t& number, bool& render_only, bool& main_thread) {
+  uint64_t packed = g_pass_any_thread.load(std::memory_order_relaxed);
+  number = packed >> 1;
+  render_only = packed & 1;
+  main_thread = std::this_thread::get_id() == g_main_thread;
 }
 
 }  // namespace subtick
@@ -128,14 +163,17 @@ extern "C" REX_FUNC(sub_82106478) {
 extern "C" REX_FUNC(sub_82159540) {
   REX_FUNC_PROLOGUE();
   subtick::g_race_draw_step_seen = true;
+  hooks::TitleScreen_OnRaceDrawn();  // ends --skip_intro's fast menus
   // The cars' matrices are blended between ticks for the step, so the camera
   // built from them moves with the cars (car_transforms.cpp).
-  // Pass 0's view-projection for this frame first (render-only passes skip
-  // the Update that builds it), then the race overlays recorded with it
+  // The camera passes' view-projections for this frame first (render-only
+  // passes skip the Update that builds them: the main camera, the mirror), then the race overlays recorded with it
   // (per_frame_logic.cpp), then the cars blended for the step.
   subtick::CarTransforms_RebuildCamera(ctx, base);
   subtick::PerFrameLogic_RecordRaceOverlays(ctx, base);
   auto restores = subtick::CarTransforms_BlendAll(base);
+  subtick::CarTransforms_DrawStepBegin();
   __imp__sub_82159540(ctx, base);
+  subtick::CarTransforms_DrawStepEnd();
   subtick::CarTransforms_RestoreAll(base, restores);
 }

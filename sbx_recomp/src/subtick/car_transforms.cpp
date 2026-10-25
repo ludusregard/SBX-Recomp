@@ -16,14 +16,18 @@
 // lerps the position and each rotation row, keeping each row's length, so a
 // car's scale is kept.
 //
-// Camera. The main camera is camera pass 0 (array at 0x826AA8E0, 592 bytes a
-// pass). CameraPass::Update (sub_820A3B98) builds its view (+16) and
-// view-projection (+144 = view times projection +80) from the eye (+400),
-// target (+416), up (+432) and roll (+448), several times a Draw. Each call on
-// pass 0 in a race is matched by its order within the pass: the logic pass
+// Cameras. The game's views are camera passes (an array at 0x826AA8E0, 592
+// bytes a pass; pass 0 is the main camera, others the rear-view mirror and
+// the like). CameraPass::Update (sub_820A3B98) builds a pass's view (+16) and
+// view-projection (+144 = view times projection +80) from its eye (+400),
+// target (+416), up (+432) and roll (+448), several times a Draw. Every pass
+// is blended the same way, keyed by its address: each call on a pass in a
+// race is matched by its order within the main loop pass, the logic pass
 // records what each call is given, and on every pass a call given exactly the
 // tick's values builds the view from the blend instead. Calls given anything
 // else are left alone. More than 8 m between ticks is a cut, not blended.
+// (Only pass 0 was blended at first: the mirror then drew the blended cars
+// from the tick's camera, and they juddered in it as they used to on screen.)
 //
 // The blended eye, target, up and roll stay in the pass until the next pass
 // starts (CarTransforms_EndFrame puts the tick's values back before any game
@@ -34,9 +38,10 @@
 //
 // The cars are drawn with whatever +144 holds when they draw: Race::DrawStep
 // draws the cars (sub_820C5BA0) before its own camera updates (sub_820F5F48).
-// On a logic pass the Update message has already rebuilt pass 0 for the
-// frame, but on a render-only pass the Update is skipped, so
-// CarTransforms_RebuildCamera makes that call before Race::DrawStep.
+// On a logic pass the Update message has already rebuilt the passes it
+// updates for the frame, but on a render-only pass the Update is skipped, so
+// CarTransforms_RebuildCamera makes those calls before Race::DrawStep: one
+// for each pass the last logic pass updated before its draw step.
 //
 // Wheel spin and steering still change once a tick.
 
@@ -63,10 +68,9 @@ constexpr uint32_t kWorldMatrix = 16;  // car+16
 // A move between ticks above this is a cut (not blended).
 constexpr float kCut = 8.0f;
 
-constexpr uint32_t kMainCamera = 0x826AA8E0;  // camera pass 0
-constexpr uint32_t kCameraState = 400;        // eye, target, up, roll
-constexpr int kCameraFloats = 13;             // eye xyzw, target xyzw, up xyzw, roll
-constexpr int kMaxCameraCalls = 16;           // CameraPass::Update calls on pass 0 a pass
+constexpr uint32_t kCameraState = 400;  // eye, target, up, roll
+constexpr int kCameraFloats = 13;       // eye xyzw, target xyzw, up xyzw, roll
+constexpr int kMaxCameraCalls = 16;     // CameraPass::Update calls on one camera a pass
 
 struct Pose {
   float prev[16] = {};
@@ -82,15 +86,23 @@ struct CameraPose {
   uint64_t tick = ~0ull;
 };
 
-std::vector<CameraPose> g_camera;  // by the call's order within the pass
-uint64_t g_camera_pass = ~0ull;    // the pass the calls are being counted in
-int g_camera_call = 0;
+// One camera pass.
+struct Camera {
+  std::vector<CameraPose> poses;  // by the call's order within the main loop pass
+  uint64_t counted_pass = ~0ull;  // the main loop pass the calls are being counted in
+  int call = 0;
+  // Updated by the last logic pass before its draw step (by the Update
+  // message): rebuilt before the draw step on render-only passes.
+  bool updated_before_draw = false;
+  // The blend written into the pass this frame, kept there until the next
+  // main loop pass starts, and the tick's values it replaced.
+  bool held = false;
+  float raw[kCameraFloats];
+  float blend[kCameraFloats];
+};
 
-// The blend written into pass 0 this frame, kept there until the next pass
-// starts, and the tick's values it replaced.
-bool g_camera_held = false;
-float g_camera_raw[kCameraFloats];
-float g_camera_blend[kCameraFloats];
+std::map<uint32_t, Camera> g_cameras;  // by the camera pass's address
+bool g_in_draw_step = false;           // between Race::DrawStep's start and end
 
 void ReadFloats(uint8_t* base, uint32_t address, float* out, int n) {
   for (int i = 0; i < n; i++) {
@@ -159,28 +171,36 @@ void TakePose(Pose& pose, bool fresh, uint64_t tick, const float* now) {
   pose.tick = tick;
 }
 
-// Before a CameraPass::Update call on pass 0: records the tick's values on a
-// logic pass, and writes the blend if the call is given the tick's values
-// (or the blend already written this frame, which stands for them).
-void CameraBegin(uint8_t* base) {
+// Before a CameraPass::Update call on a camera pass: records the tick's
+// values on a logic pass, and writes the blend if the call is given the
+// tick's values (or the blend already written this frame, which stands for
+// them).
+void CameraBegin(uint8_t* base, uint32_t address) {
+  Camera& camera = g_cameras[address];
   uint64_t pass = GameMessages_PassNumber();
-  if (pass != g_camera_pass) {
-    g_camera_pass = pass;
-    g_camera_call = 0;
+  if (pass != camera.counted_pass) {
+    camera.counted_pass = pass;
+    camera.call = 0;
+    if (!GameMessages_IsRenderOnlyPass()) {
+      camera.updated_before_draw = false;
+    }
   }
-  int call = g_camera_call++;
+  if (!GameMessages_IsRenderOnlyPass() && !g_in_draw_step) {
+    camera.updated_before_draw = true;
+  }
+  int call = camera.call++;
   if (call >= kMaxCameraCalls) {
     return;
   }
-  if (int(g_camera.size()) <= call) {
-    g_camera.resize(call + 1);
+  if (int(camera.poses.size()) <= call) {
+    camera.poses.resize(call + 1);
   }
-  CameraPose& pose = g_camera[call];
+  CameraPose& pose = camera.poses[call];
   uint64_t tick = GetFramePacer().TicksReleased();
   float now[kCameraFloats];
-  ReadFloats(base, kMainCamera + kCameraState, now, kCameraFloats);
-  if (g_camera_held && std::memcmp(now, g_camera_blend, sizeof(now)) == 0) {
-    std::copy(g_camera_raw, g_camera_raw + kCameraFloats, now);
+  ReadFloats(base, address + kCameraState, now, kCameraFloats);
+  if (camera.held && std::memcmp(now, camera.blend, sizeof(now)) == 0) {
+    std::copy(camera.raw, camera.raw + kCameraFloats, now);
   }
   if (!GameMessages_IsRenderOnlyPass() && pose.tick != tick) {
     bool consecutive = pose.tick + 1 == tick;
@@ -203,10 +223,10 @@ void CameraBegin(uint8_t* base) {
     out[i] = pose.prev[i] + (pose.cur[i] - pose.prev[i]) * t;
   }
   KeepLength(pose.prev + 8, pose.cur + 8, t, out + 8);  // the up vector
-  WriteFloats(base, kMainCamera + kCameraState, out, kCameraFloats);
-  std::copy(now, now + kCameraFloats, g_camera_raw);
-  std::copy(out, out + kCameraFloats, g_camera_blend);
-  g_camera_held = true;
+  WriteFloats(base, address + kCameraState, out, kCameraFloats);
+  std::copy(now, now + kCameraFloats, camera.raw);
+  std::copy(out, out + kCameraFloats, camera.blend);
+  camera.held = true;
 }
 
 }  // namespace
@@ -308,14 +328,16 @@ void CarTransforms_RestoreAll(uint8_t* base, const std::vector<CarTransformResto
 }
 
 void CarTransforms_EndFrame(uint8_t* base) {
-  if (!g_camera_held) {
-    return;
-  }
-  g_camera_held = false;
-  float now[kCameraFloats];
-  ReadFloats(base, kMainCamera + kCameraState, now, kCameraFloats);
-  if (std::memcmp(now, g_camera_blend, sizeof(now)) == 0) {
-    WriteFloats(base, kMainCamera + kCameraState, g_camera_raw, kCameraFloats);
+  for (auto& [address, camera] : g_cameras) {
+    if (!camera.held) {
+      continue;
+    }
+    camera.held = false;
+    float now[kCameraFloats];
+    ReadFloats(base, address + kCameraState, now, kCameraFloats);
+    if (std::memcmp(now, camera.blend, sizeof(now)) == 0) {
+      WriteFloats(base, address + kCameraState, camera.raw, kCameraFloats);
+    }
   }
 }
 
@@ -323,33 +345,49 @@ void CarTransforms_RebuildCamera(PPCContext& ctx, uint8_t* base) {
   if (!CameraEnabled() || !GameMessages_IsRenderOnlyPass()) {
     return;
   }
+  std::vector<uint32_t> passes;
+  for (const auto& [address, camera] : g_cameras) {
+    if (camera.updated_before_draw) {
+      passes.push_back(address);
+    }
+  }
   uint64_t r3 = ctx.r3.u64;
   uint64_t lr = ctx.lr;
-  ctx.r3.u64 = kMainCamera;
-  sub_820A3B98(ctx, base);  // through the wrapper below: built from the blend
+  for (uint32_t address : passes) {
+    ctx.r3.u64 = address;
+    sub_820A3B98(ctx, base);  // through the wrapper below: built from the blend
+  }
   ctx.r3.u64 = r3;
   ctx.lr = lr;
+}
+
+void CarTransforms_DrawStepBegin() {
+  g_in_draw_step = true;
+}
+
+void CarTransforms_DrawStepEnd() {
+  g_in_draw_step = false;
 }
 
 bool CarTransforms_CameraEnabled() {
   return CameraEnabled();
 }
 
-void CarTransforms_CameraBegin(uint8_t* base) {
-  CameraBegin(base);
+void CarTransforms_CameraBegin(uint8_t* base, uint32_t address) {
+  CameraBegin(base, address);
 }
 
 }  // namespace subtick
 
 // CameraPass::Update: r3 = the camera pass. Builds its view from its eye,
-// target, up and roll. On pass 0 in a race, built from the blend between
-// ticks (above); the blend stays in the pass for the rest of the frame.
+// target, up and roll. In a race, built from the blend between ticks
+// (above); the blend stays in the pass for the rest of the frame.
 extern "C" REX_FUNC(sub_820A3B98) {
   REX_FUNC_PROLOGUE();
-  if (ctx.r3.u32 != 0x826AA8E0 || !subtick::CarTransforms_CameraEnabled()) {
+  if (!subtick::CarTransforms_CameraEnabled()) {
     __imp__sub_820A3B98(ctx, base);
     return;
   }
-  subtick::CarTransforms_CameraBegin(base);
+  subtick::CarTransforms_CameraBegin(base, ctx.r3.u32);
   __imp__sub_820A3B98(ctx, base);
 }

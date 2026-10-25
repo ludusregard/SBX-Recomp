@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "sbx_parts"
-version = "1.0.0"
+version = "1.2.0"
 name = "SBX Part Tools"
 tagline = "Import and export Shutoko Battle X part files (car models)"
 maintainer = "SBX Recomp"

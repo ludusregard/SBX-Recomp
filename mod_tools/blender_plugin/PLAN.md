@@ -18,14 +18,14 @@ format code).
 ## Scope
 
 In scope now: **patching existing parts.** Import a part (or a car's
-parts), edit geometry, UVs, normals and vertex colors, assign the part's
-existing materials, export a part file the game loads in place of the
-original.
+parts), edit geometry, UVs, normals and vertex colors, assign materials,
+add shapes, markers and materials to a part (1.1), export a part file the
+game loads in place of the original.
 
-Not now: new materials or shaders, editing or adding textures (XPR2
-writing), new parts or archive ids (that's the addon loader,
-`docs/modding-plan.md`), skinned and morphing shapes beyond carrying them
-through untouched.
+Not now: editing or adding textures (XPR2 writing; new materials bind
+the XPR2's existing textures), new parts or archive ids (that's the addon
+loader, `docs/modding-plan.md`), skinned and morphing shapes beyond
+carrying them through untouched, removing shapes.
 
 ## Ground rules
 
@@ -80,6 +80,10 @@ blender_plugin/
     materials.py          Blender materials for display (XPR2 textures)
     import_part.py        game files -> Blender objects
     export_part.py        Blender objects -> sidecar + geometry -> part_write
+    edit_part.py          adding shapes, markers, materials; sidecar sync
+    operators.py          the SBX tab's buttons; ui.py its panels
+    sources.py            records, layouts, shader pairs (sidecars, library)
+    part_tree.py          a part's objects, transforms in part space
   sbx_formats/            the format code: plain Python and numpy, no Blender
     binary.py             big-endian helpers, Record (raw bytes + named fields)
     layout.py             field tables of the PART records (every byte named)
@@ -91,6 +95,8 @@ blender_plugin/
     part_write.py         the writer: model -> bytes
     decode.py             the decoded view: positions, normals, UVs, triangles
     encode.py             edited shapes: vertex data and triangles -> streams, strips
+    compose.py            adding shapes, markers, shader pairs to a part; its rules
+    library.py            the shader library: every pair, with examples
     cars.py               car blocks, part slots, wheels, the node frame
     sidecar.py            the sidecar: model <-> JSON
     shaders.py            the shader section and the shader library
@@ -106,6 +112,8 @@ blender_plugin/
                           import against the decoded parts
     blender_export.py     imports cars, exports them, compares with the
                           game's files; edits, hiding, refusals
+    compose.py            adds shapes, markers, shader pairs to every part
+    blender_add.py        Add to Part, Make SBX Material, needles
   build/                  build.py's output (not committed)
 ```
 
@@ -134,7 +142,10 @@ hidden text block in a .blend. Keyed by stable
 things (part id, shape index, original shape name, draw index), never by
 Blender names:
 
-- the source part's id and a hash of its bytes;
+- the source part's id; a hash and the size of the game's file (in the
+  raw half since 1.1: only Skip unchanged parts uses them, and they
+  describe the game's file, not the sidecar, so editing the sidecar
+  doesn't change them);
 - the header and every section not decoded, as raw bytes (base64 or hex);
 - the node list and the embedded node file;
 - the shader section (raw, plus each pair's hash in the shader library);
@@ -165,8 +176,25 @@ properties that point back into the sidecar:
   `sbx_textures` (XPR list index and texture index for each bound
   texture).
 
-For now a material only ever points at an existing record and its XPR2
-textures; making new material references comes later.
+A material made with Make SBX Material (1.1) has `sbx_new`,
+`sbx_template` (the game record it starts from), `sbx_shader` and
+`sbx_textures`, and its own values (`sbx_diffuse` ...), which the export
+writes over the template's record. New shapes have `sbx_new_shape`, new
+markers `sbx_new_marker` (properties.py lists every tag).
+
+The readable half shows the part as it will be written (1.2;
+edit_part.sync_sidecar builds the part as the export does and writes the
+readable half from it, run by the buttons and the export): the game's
+shapes in order, then the new ones, each with its streams and every draw
+in full; markers, nodes and shader pairs as written; additions marked
+`new`. Each draw has its `slot` and `material`, and `record_from` when
+its record comes from a material. Every draw is edited there: a game
+draw's edits are applied to the game's record, a draw from a material
+gets the material's record with the entry's edits on top, while the
+entry names that slot's current material. This keeps it stateless: the
+export reapplies what the entry says. The raw half is never changed: it
+is the game's part, and additions are made from the scene at each
+export.
 
 **Materials are shared, records stay per draw.** Two draws share one
 Blender material when their records match except for where their indices
@@ -238,7 +266,22 @@ adds the suffixes.
   adjusted without touching the raw half; only those bytes change. Not
   yet: changing how many textures are bound (+0x06C and +0x0D8 follow
   the count), and a shader id the part's own shader section doesn't
-  have (needs the shader library).
+  have (a material with that pair brings it in, see Additions).
+- **Additions (1.1):** new shapes (meshes joined with Add to Part) are
+  encoded in the stream layout of a shape their materials came from (or
+  of one of the part's own; `encode.choose_template`) and inserted at
+  their sorted place with a shape node and an embedded node; new markers
+  get a node and an embedded node at their position; a material whose
+  shader pair the part lacks appends the pair to the shader section
+  (`compose.py`; the rules are in `docs/game_data.md`, "Node and shape
+  order"). The written part must still follow the game's rules
+  (`check_rules`), or the export stops.
+- **A slot's material swapped** on an otherwise untouched shape counts as
+  an edit (1.1; before, it was ignored).
+- **Shapes under markers:** the meter needles hang from their pivot
+  marker; a marker between a shape and its part root counts with its
+  position only (`part_tree.to_root`), so rotating it to preview the
+  needle doesn't change the export.
 - **Edited shape:** encode from Blender: positions (float3), normals
   (half4), UVs (half2), colors, in the shape's original stream layout;
   triangles as strips with 0xFFFF restarts; recompute the bounding box
@@ -350,6 +393,30 @@ and its reader `SBX_model.py` (a glTF converter); both were removed in
   61 -> 40 materials, SKY35 stock 32) and named by role (`sky35_ex
   trim`, `tex49 paint`).
 
+- 1.2.0: fixes from the first test of 1.1, where additions didn't reach
+  the file: a Shift+D copy keeps the original's tags, so Add to Part took
+  it for the original and did nothing (it now tells a copy by its name);
+  exporting in Edit Mode read stale meshes (the export now leaves Edit
+  Mode and returns). The readable sidecar is now generated from the built
+  part (above): new shapes, markers and pairs as full entries, every draw
+  editable, textures by name, any shader by id; values of new materials
+  are edited there, not in the material panel. The export's message lists
+  what was added. `blender_add.py` adds: a Shift+D copy, an export from
+  Edit Mode, the full sidecar entries, a new draw's color and texture
+  edited by name.
+- 1.1.0: adding to parts. Add to Part (new shapes and markers), Remove
+  from Part, Make SBX Material (any shader pair, from the imported parts
+  or the shader library; a game record to start from; textures by name),
+  Refresh Sidecar, in the 3D view's SBX tab; Material Properties > SBX
+  for a new material's values; the shader library (v2, with example
+  records and shape layouts) built from the add-on's preferences; meter
+  needles under their markers; a slot's swapped material is exported;
+  the game file's hash and size moved to the raw half. Tests:
+  `compose.py` (390 parts take two new shapes, a marker and a foreign
+  shader pair, and read back with the rules intact), `blender_add.py`
+  (S30 side skirt 5757 with a second shape, a shape sorting first, a
+  marker, a library material, a swapped material, needles, Remove from
+  Part). Not tried in the game yet.
 - 1.0.0: everything above, with the add-on, its format code, tests and
   tools in this folder; car roots are named by car (`SKY35_a`), the
   Wheels field takes wheel names (`SKY35`, `AD03 583`), and
@@ -402,3 +469,9 @@ addon loader.
 
 - Stream type 0x0D (two shapes, one bonnet model): the second vector's
   use isn't known, so those shapes export only untouched.
+- Whether the game builds each shape's vertex declaration from its
+  stream types (inferred: one vertex shader runs with several layouts).
+  An in-game test of a new shape with a material from another shape
+  will tell.
+- Whether the game finds shapes or nodes by binary search (they're
+  sorted in every part); new ones are inserted in order either way.

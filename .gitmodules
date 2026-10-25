@@ -7,3 +7,11 @@
 	url = https://github.com/ludusregard/Shutoko-Battle-X-Restored.git
 	branch = gut_archive_files
 	shallow = true
+[submodule "sbx_recomp/thirdparty/FFmpeg"]
+	path = sbx_recomp/thirdparty/FFmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
+	shallow = true
+[submodule "sbx_recomp/thirdparty/xxHash"]
+	path = sbx_recomp/thirdparty/xxHash
+	url = https://github.com/Cyan4973/xxHash.git
+	shallow = true

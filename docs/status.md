@@ -1,18 +1,31 @@
 # Status
 
-The state of `main` (2026-10-19). Update this when a fix, experiment or
+The state of `main` (2026-10-25). Update this when a fix, experiment or
 plan changes.
 
 ## Working
 
-Boots and runs on Windows on the emulated GPU (`--gpu_plugin=xenos`).
-Codegen is clean: 15,963 functions, no unresolved branches or calls.
+Boots and runs on Windows in two builds: the emulated GPU (`build.bat`,
+`run.bat`; the SDK's Xenos emulation, the debugging reference) and the
+native Vulkan renderer ported from ITC-Recomp (`build_vulkan.bat`,
+`run_vulkan.bat`; `SBX_NATIVE_RENDERER=ON`, `docs/native-renderer-port.md`),
+which also plays the movies through FFmpeg (`src/movies/`). Both use our
+own audio output (`src/audio/`, `--native_audio`). The Vulkan build can
+also anti-alias the race's 3D view with CMAA2 (`--cmaa2`,
+`--cmaa2_threshold`) or FXAA (`--fxaa`), both working (the user's test,
+2026-10-25), and blur it by blending frames away from the screen's centre
+(`--frame_blend`, with `--subtick` and a high `--max_fps`; not yet tested). Codegen is clean: 15,963
+functions, no unresolved branches or calls. What else came over from
+ITC-Recomp, and what's next: `docs/itc-parity.md`.
 
 ## Fixes
 
 - The black screen after quest races: `sub_8218C240`, the post-race
   check, waits 1 cycle instead of 60 (`src/hooks/post_race.cpp`,
-  `--post_race_check_fix`, on by default).
+  `--post_race_check_cycles`, 1 by default; 60 is the game's).
+- The race-end music (the tutorial's `bgm_tmp_08`) cut off with
+  `--subtick`: the forced exit waits for the screen fades, which stepped
+  once a frame; they step once a tick now (`src/subtick/per_frame_logic.cpp`).
 
 ## Experiments
 
@@ -66,7 +79,9 @@ Codegen is clean: 15,963 functions, no unresolved branches or calls.
 
 ## Not done yet
 
-- Port more of the fixes and features ITC-Recomp has, starting with game
-  compatibility. Its native Vulkan renderer, native audio and frame
-  interpolation are on hold.
+- The rest of ITC-Recomp's parity plan (`docs/itc-parity.md`): XACT
+  natively, the SDK's kernel calls, the game's code natively. (XMA decoding
+  through FFmpeg is in, both builds.)
+- `--skip_intro`'s wait once the fast-forward ends: the pacer's next tick
+  is now clamped to one tick ahead (`subtick/frame_pacer.cpp`); to confirm.
 - A CI build.

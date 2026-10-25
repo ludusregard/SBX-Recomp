@@ -1,5 +1,9 @@
 @echo off
-rem Build sbx.exe:  build.bat [preset]   (default win-amd64-relwithdebinfo)
+rem Build sbx.exe for the emulated Xbox 360 GPU (--gpu_plugin=xenos):
+rem   build.bat [preset]   (default win-amd64-relwithdebinfo)
+rem
+rem Output: out\build\<preset>\sbx.exe. The native Vulkan build is separate:
+rem vulkan_build.bat (out\build\<preset>-vulkan).
 rem
 rem Logged to out\build.log (overwritten each run). On a failure the last
 rem lines and every "error" line are shown and the window waits for a key
@@ -18,10 +22,11 @@ if not exist "generated\default\sources.cmake" (
   echo No generated code yet: run codegen.bat first. >> "%LOG%"
   goto :failed
 )
-if not exist "%B%\build.ninja" (
-  echo === Configuring ^(%PRESET%^)
-  cmake --preset %PRESET% >> "%LOG%" 2>&1 || goto :failed
-)
+
+rem Configure every time, with the native renderer off, so a build folder
+rem left over from vulkan_build.bat can't keep it on.
+echo === Configuring ^(%PRESET%, SBX_NATIVE_RENDERER=OFF^)
+cmake --preset %PRESET% -DSBX_NATIVE_RENDERER=OFF >> "%LOG%" 2>&1 || goto :failed
 
 echo === Building (the first build compiles ~190 generated files: slow)
 cmake --build "%B%" >> "%LOG%" 2>&1 || goto :failed

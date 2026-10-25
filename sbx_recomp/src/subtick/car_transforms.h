@@ -1,4 +1,4 @@
-// Interpolates the cars' world matrices and the main camera between the
+// Interpolates the cars' world matrices and the camera passes between the
 // game's 30 Hz ticks (--subtick). See car_transforms.cpp.
 
 #pragma once
@@ -40,18 +40,24 @@ CarTransformRestore CarTransforms_DrawBegin(uint8_t* base, uint32_t car);
 void CarTransforms_DrawEnd(uint8_t* base, const CarTransformRestore& restore);
 
 // Before Race::DrawStep on a render-only pass in a race: runs CameraPass::Update
-// on pass 0 (built from the blend), as the skipped Update message does on a
-// logic pass, so the cars and the race overlays are drawn with this frame's
-// view-projection.
+// on each camera pass the last logic pass's Update message updated (built from
+// the blend), as the skipped Update does on a logic pass, so the cars and the
+// race overlays are drawn with this frame's view-projections (the main camera,
+// the rear-view mirror).
 void CarTransforms_RebuildCamera(PPCContext& ctx, uint8_t* base);
 
+// Around Race::DrawStep: camera updates in between belong to the draw step,
+// not to the Update message (for CarTransforms_RebuildCamera).
+void CarTransforms_DrawStepBegin();
+void CarTransforms_DrawStepEnd();
+
 // Main thread, at the start of each pass (before any game logic): puts the
-// tick's eye, target, up and roll back into camera pass 0 if it still holds
-// the blend written for the last frame.
+// tick's eye, target, up and roll back into every camera pass that still
+// holds the blend written for the last frame.
 void CarTransforms_EndFrame(uint8_t* base);
 
-// For the CameraPass::Update wrapper.
+// For the CameraPass::Update wrapper: r3 = the camera pass.
 bool CarTransforms_CameraEnabled();
-void CarTransforms_CameraBegin(uint8_t* base);
+void CarTransforms_CameraBegin(uint8_t* base, uint32_t address);
 
 }  // namespace subtick

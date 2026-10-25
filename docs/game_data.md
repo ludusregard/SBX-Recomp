@@ -774,6 +774,16 @@ matrices, the parents included: the omamori's bone chain shows it
 -0.248), where the car nodes can't, since their parents sit at the origin
 (confirmed). What the second matrix array is for isn't known.
 
+**Layout** (all 399 node files in the dump checked: the cars' and the
+ones embedded in parts; confirmed against the data). The sections follow
+each other with no gaps, in header order: the node records from 0x40,
+then translations, rotations and scales (16 bytes per node each), the
+three matrix arrays (64 bytes per node each), the 16-byte tail; +0x30 is
+the tail's end. The cars' own node files carry 16 more zero bytes after
+that end (the same 16 that follow a node file embedded in a part). So a
+node file can be rebuilt from its records and arrays, which is how the
+Blender add-on adds nodes (`sbx_formats/node.py`, `insert_node`).
+
 **Markers.** Most of a car's nodes sit at the origin and only name an
 attach point (`room`, `steering`, `mainmeter`, `addmeter`, `roll_tower`,
 `fb`, `rb` ...): those parts are modeled in place. The ones with a
@@ -1027,9 +1037,13 @@ lit and textured, `ps_16` lit with specular, a cube map and a texture
 (inferred from the names). The
 sections differ from part to part mostly in those 16 leftover bytes. The
 same section turns up at many file offsets, so it holds no file offsets.
-`python -m sbx_formats.shaders BUILD_OUT -o ../../assets/shader_library.json`
-(from `mod_tools/blender_plugin/`)
-collects them (the library is game data, so it stays under `assets/`).
+`python -m sbx_formats.library BUILD_OUT -o ../../assets/shader_library.json`
+(from `mod_tools/blender_plugin/`) collects every pair with its entry and
+a few material records that use it (the library is game data, so it stays
+under `assets/` or in the Blender add-on's own folder). A part takes a
+pair it doesn't have by appending it: the count at +0x00 goes up one and
++0x04 is recomputed by the rule above (it holds in all parts); a draw then
+names the new pair by its index at +0x068. Not yet tried in game.
 
 The material and shape records have more bytes than the fields above;
 `mod_tools/blender_plugin/sbx_formats/layout.py` names every byte, with the ones not
@@ -1076,6 +1090,49 @@ as the car's. The RX7's parts carry effect markers:
 
 What the game does with them isn't traced (probably the exhaust and light
 effects).
+
+The meter parts (set b +188 and +191, set c +47 and +50) carry the needles'
+pivots: `sm_hari` and `tm_hari` (speedometer, tachometer) for
+`sm_hari00_Shape` and `tm_hari00_Shape`, `dm_00`-`02`, `pm_00`-`01`,
+`rm_00`-`01` for `dm_hari00_Shape` ... The marker sits at the needle's
+inner end, so the needle presumably turns about it (inferred from the
+positions; the code that turns them isn't traced). Set a's meter parts
+have no needles.
+
+**Node and shape order** (all 395 parts in the RX7's three sets, the
+SKY35's and the S30's set a, the wheels and the 0x0D and 0x10 parts;
+BUILD 141 aside, which has no nodes):
+
+- the shapes are sorted by name (byte order of the 32-byte names);
+- the node list is sorted by name too; each shape has its own node
+  (kind 1), all named after what the part attaches to (`fb`, `ss`,
+  `door`), in no set order among themselves; each marker its own node
+  (kind 0);
+- the embedded node file has one node per entry of the node list, in the
+  same order, with the same names, all top-level and at the origin for
+  the shape nodes;
+- a node's +0x24 is the index of the first node with its name: all of a
+  part's shape nodes point at the first shape node's embedded node, a
+  marker at its own.
+
+So a shape is added to a part by inserting it at its sorted place, giving
+it a node (a copy of the part's other shape nodes) after the last one, and
+an embedded node (a copy) at the same place, then renumbering +0x24 and
+the shape indices. Written that way (`sbx_formats/compose.py`), new shapes,
+markers and shader pairs in all 390 of those parts with a shape to copy
+read back with these rules intact (`blender_plugin/tests/compose.py`);
+not yet tried in the game.
+
+**Stream layouts and shaders** (inferred). The same vertex shader runs
+with several stream layouts: `vs_02` with float3 positions and half
+normals (0x0B, 0x0C), with the wheels' float4 ones (0x05, 0x07), and with
+color/two UVs (0x0F); `vs_07` with and without a normal stream. On Xenos
+the vertex fetches are patched from the vertex declaration at draw time,
+so the game likely builds a declaration from each shape's stream types:
+a layout that carries more than a shader reads should work. A new shape
+takes the layout of a shape its materials came from, the one carrying the
+most (color < UV < two UVs < three UVs, then normals). Not confirmed in
+game.
 
 ### Car models: sets a, b and c (confirmed from the code)
 

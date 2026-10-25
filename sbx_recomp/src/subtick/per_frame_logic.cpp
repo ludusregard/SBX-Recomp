@@ -22,11 +22,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
@@ -185,17 +187,37 @@ extern "C" REX_FUNC(sub_820F5610) {
   guest::StoreU32(base, kMinimapBlinkPhase, phase);
 }
 
-// sub_82107A38, from Draw, every pass: adds one to the play time frame
-// counter at 0x826B5870 (sub_82110928 turns it into hours, minutes and
-// seconds at 30 a second), and runs the action mappers' update
-// (sub_8210B140, see subtick/input.cpp). The one is taken back first on
-// render-only passes (--subtick), and on every other call with
-// --tick_rate_60 (60 ticks a second), so play time counts real time.
+// sub_82107A38, the game's per-frame logic, from Draw, every pass (on the
+// 360, once a 30 Hz tick). Besides drawing it steps game state by one each
+// call, which with --subtick's render-only passes ran once a frame:
+// - the play time frame counter at 0x826B5870 (sub_82110928 turns it into
+//   hours, minutes and seconds at 30 a second);
+// - the screen fades (Fade::Update, sub_8209D250): two layers, each with a
+//   fade-out count at 0x82694DBC + 4i and a fade-in count at 0x82694DC4 +
+//   4i, down by one a call, the fade quad's alpha from them. The race's
+//   forced exit waits for the fades (sub_82166940 posts message 49, leaving
+//   the race, once all four are 0): at 60 fps it came twice as soon, so the
+//   race-end music's step (bgm_tmp_08) was cut short;
+// - a countdown at 0x825F180C, down by one a call;
+// - the action mappers' update (sub_8210B140, subtick/input.cpp).
+// On render-only passes each of these is put back after the call (only a
+// step of one: a fade the call starts is kept), so they count ticks; the
+// fade is still drawn every frame, at the tick's alpha. With --tick_rate_60
+// the play time's one is taken back every other call, so it counts real time.
+namespace {
+constexpr uint32_t kFadeOutCounts = 0x82694DBC;  // 2 layers
+constexpr uint32_t kFadeInCounts = 0x82694DC4;   // 2 layers
+constexpr uint32_t kFrameCountdown = 0x825F180C;
+constexpr std::array<uint32_t, 5> kPerTickCounts = {
+    kFadeOutCounts, kFadeOutCounts + 4, kFadeInCounts, kFadeInCounts + 4, kFrameCountdown};
+}  // namespace
+
 extern "C" REX_FUNC(sub_82107A38) {
   REX_FUNC_PROLOGUE();
   static bool take_back = false;
   bool undo = false;
-  if (RenderOnly()) {
+  bool render_only = RenderOnly();
+  if (render_only) {
     undo = true;
   } else if (REXCVAR_GET(tick_rate_60)) {
     undo = take_back;
@@ -204,19 +226,137 @@ extern "C" REX_FUNC(sub_82107A38) {
   if (undo) {
     guest::StoreU32(base, kPlayTimeFrames, guest::LoadU32(base, kPlayTimeFrames) - 1);
   }
+  std::array<uint32_t, kPerTickCounts.size()> before{};
+  if (render_only) {
+    for (size_t i = 0; i < kPerTickCounts.size(); i++) {
+      before[i] = guest::LoadU32(base, kPerTickCounts[i]);
+    }
+  }
   __imp__sub_82107A38(ctx, base);
+  if (render_only) {
+    for (size_t i = 0; i < kPerTickCounts.size(); i++) {
+      if (guest::LoadU32(base, kPerTickCounts[i]) == before[i] - 1) {
+        guest::StoreU32(base, kPerTickCounts[i], before[i]);
+      }
+    }
+  }
+}
+
+// UI movies' adding animation tracks, with --subtick (ported from ITC-Recomp,
+// its --per_tick_ui_movie_tracks; its docs/pause-menu-fix.md, "The sub-menus'
+// arrow"). A track writes one value into its node, outside the bytes the UI
+// movie replay restores; a track whose property descriptor's byte +8 is 0
+// adds its value instead of setting it. Most nodes are put back to the
+// movie's rest pose at the end of the update (UiMovie::RestorePose,
+// sub_82119D50), so their adds start again from it every update; skipping
+// those on render-only passes would draw the rest pose there. Adds on values
+// the update doesn't put back were applied again on every render-only update
+// (ITC: at 144 fps the pause sub-menus' arrow slid ~5x as far). So on a logic
+// pass each adding track's target is noted as put back or not (its value at
+// the end of the update is the one before the track), and on render-only
+// passes only adds on targets not seen put back are skipped.
+//
+// sub_82585C40 (ITC sub_825A0548, the same code but for float constants): r3
+// = the node, r4 = the track, whose word +0 is a property id. The property's
+// descriptor (from sub_82585560) is entry id of a 12-byte table at
+// 0x82973088 (ITC 0x82970C28), filled on first use (byte 0x82973080 set;
+// ITC 0x82970C20): +0 the node offset, +4 the type (0 float, 1 and 2
+// integer, 3 and up write nothing), byte +8 set (non-zero) or add (0), byte
+// +9 indirect. The one word written is node + offset, plus, when indirect,
+// 16 * ([node + 112] + 2 * ([track + 12] + 4)).
+namespace {
+
+constexpr uint32_t kTrackPropertiesReady = 0x82973080;  // ITC 0x82970C20
+constexpr uint32_t kTrackProperties = 0x82973088;       // ITC 0x82970C28
+constexpr uint32_t kTrackPropertyCount = 64;
+
+struct AddedTarget {
+  uint32_t target, before;
+};
+// The adding tracks' targets of each UI movie update in progress (updates
+// can nest), with their values before the track; null outside an update.
+std::deque<std::vector<AddedTarget>> g_added_by_depth;
+size_t g_update_depth = 0;
+std::vector<AddedTarget>* g_added = nullptr;
+// Targets of adding tracks the last logic pass's update put back.
+std::unordered_set<uint32_t> g_put_back_targets;
+
+uint32_t TrackTarget(uint8_t* base, uint32_t node, uint32_t track, uint32_t descriptor) {
+  uint32_t target = node + guest::LoadU32(base, descriptor);
+  if (guest::LoadU8(base, descriptor + 9) != 0) {
+    target += 16 * (guest::LoadU32(base, node + 112) + 2 * (guest::LoadU32(base, track + 12) + 4));
+  }
+  return target;
+}
+
+// At the end of a logic pass's update: a target is put back when it holds
+// its value from before its first track in the update (walked from the end,
+// so that track decides).
+void NotePutBackTargets(uint8_t* base, const std::vector<AddedTarget>& added) {
+  for (auto it = added.rbegin(); it != added.rend(); ++it) {
+    if (guest::LoadU32(base, it->target) == it->before) {
+      g_put_back_targets.insert(it->target);
+    } else {
+      g_put_back_targets.erase(it->target);
+    }
+  }
+}
+
+}  // namespace
+
+extern "C" REX_FUNC(sub_82585C40) {
+  REX_FUNC_PROLOGUE();
+  if (g_added == nullptr || guest::LoadU8(base, kTrackPropertiesReady) == 0) {
+    __imp__sub_82585C40(ctx, base);
+    return;
+  }
+  uint32_t node = ctx.r3.u32, track = ctx.r4.u32;
+  uint32_t property = guest::LoadU32(base, track);
+  uint32_t descriptor = kTrackProperties + 12 * property;
+  bool adds = property < kTrackPropertyCount && guest::LoadU8(base, descriptor + 8) == 0;
+  uint32_t type = property < kTrackPropertyCount ? guest::LoadU32(base, descriptor + 4) : 3;
+  if (!adds || type >= 3) {
+    __imp__sub_82585C40(ctx, base);
+    return;
+  }
+  uint32_t target = TrackTarget(base, node, track, descriptor);
+  if (RenderOnly()) {
+    if (!g_put_back_targets.contains(target)) {
+      return;  // an add the update wouldn't undo: once a tick
+    }
+  } else {
+    g_added->push_back({target, guest::LoadU32(base, target)});
+  }
+  __imp__sub_82585C40(ctx, base);
 }
 
 // UI movie update: r3 = the movie, r4 = 0 advances a frame and draws, 1
 // only draws. Advancing is replayed from the logic pass on render-only
-// passes (the HUD; the race start countdown is a 240-frame movie).
+// passes (the HUD; the race start countdown is a 240-frame movie). Each
+// update's adding tracks are noted (above).
 extern "C" REX_FUNC(sub_8211D4B8) {
   REX_FUNC_PROLOGUE();
+  bool tracks = REXCVAR_GET(subtick);
+  std::vector<AddedTarget>* added_before = g_added;
+  if (tracks) {
+    if (g_update_depth == g_added_by_depth.size()) {
+      g_added_by_depth.emplace_back();
+    }
+    g_added = &g_added_by_depth[g_update_depth++];
+    g_added->clear();
+  }
   if (ctx.r4.u32 != 0 || !REXCVAR_GET(subtick)) {
     __imp__sub_8211D4B8(ctx, base);
-    return;
+  } else {
+    g_ui_movies.Run(base, ctx.r3.u32, [&] { __imp__sub_8211D4B8(ctx, base); });
   }
-  g_ui_movies.Run(base, ctx.r3.u32, [&] { __imp__sub_8211D4B8(ctx, base); });
+  if (tracks) {
+    if (!RenderOnly()) {
+      NotePutBackTargets(base, *g_added);
+    }
+    g_update_depth--;
+  }
+  g_added = added_before;
 }
 
 // Car::DrawUpdate (r3 = the car - 4288), every pass: first lowers the boost

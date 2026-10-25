@@ -187,15 +187,27 @@ def edit_tests(build_out, tmp, bonnet):
         orig_part.header.get('vertex_data_size'), size, part.header.get('vertex_data_size'),
         tri_count(orig), tri_count(dp)))
 
-    # A material whose shader this part doesn't have: refused.
+    # A material whose shader this part doesn't have: the pair comes in
+    # from the part the material was imported with (add-on 1.1).
     bonnet = reimport_sky35(build_out)
     obj = shape_obj(bonnet)
     foreign = next((m for m in bpy.data.materials if m.get('sbx_shader') and shader_ids(m) not in ids), None)
     if foreign is not None:
         obj.data.materials.append(foreign)
         obj.data.polygons[0].material_index = len(obj.material_slots) - 1
-        r, msg = try_export(os.path.join(tmp, 'm5'))
-        report('material with a shader the part lacks', r == {'CANCELLED'} and 'shader' in msg, msg[:120])
+        out = os.path.join(tmp, 'm5')
+        r, msg = try_export(out)
+        if r != {'FINISHED'}:
+            report('material with a shader the part lacks', False, msg[:120])
+        else:
+            from sbx_formats import shaders
+            part, dp = read_back(os.path.join(out, '00002844.part'))
+            _, pairs, _ = shaders.split_section(part.shaders_raw)
+            last = part.shapes[0].draws[-1]
+            good = (len(pairs) == orig_part.shader_count + 1 and pairs[last.get('shader')].ids == shader_ids(foreign)
+                    and len(dp.shapes[0].draws[-1].triangles) == 1)
+            report('material with a shader the part lacks', good, 'pair %s brought in as slot %d' % (
+                shader_ids(foreign), last.get('shader')))
 
     # Readable sidecar edit: specular of the bonnet's first draw.
     bonnet = reimport_sky35(build_out)

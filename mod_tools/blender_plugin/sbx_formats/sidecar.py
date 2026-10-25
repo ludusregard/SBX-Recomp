@@ -159,9 +159,7 @@ def to_sidecar(part, name=None, source=None, texture_names=None):
         'version': VERSION,
         'part': {'name': name,
                  'id': int(name) if name and name.isdigit() else None,
-                 'attach': next((n.name for n in part.nodes if n.is_shape_node), None),
-                 'sha256': sha256(source) if source is not None else None,
-                 'size': len(source) if source is not None else None},
+                 'attach': next((n.name for n in part.nodes if n.is_shape_node), None)},
         'shapes': [],
         'markers': [{'name': n['name'], 'position_node_frame': n.get('position_node_frame')}
                     for n in nodes if n['kind'] == 'marker'],
@@ -169,6 +167,10 @@ def to_sidecar(part, name=None, source=None, texture_names=None):
         'shader_pairs': [{'slot': k, 'shader': p.ids, 'vs_hash': p.vs_hash, 'ps_hash': p.ps_hash}
                          for k, p in enumerate(pairs)],
         'raw': {
+            # The game's file, to tell an export that comes out identical
+            # to it (the Skip unchanged parts option).
+            'source': {'sha256': sha256(source) if source is not None else None,
+                       'size': len(source) if source is not None else None},
             'header': b64(part.header.raw),
             'nodes': [b64(n.raw) for n in part.nodes],
             'embedded': {'raw': b64(part.embedded_raw), 'tail': b64(part.embedded_tail)},
@@ -223,71 +225,122 @@ def _shared_value(v):
     return int(v)
 
 
-def apply_readable_edits(sc):
-    """Apply edits made in the readable half to the raw records.
+def resolve_texture_names(d, names):
+    """A draw entry's textures given by name -> their index in the XPR2
+    (names: its texture names, in order). An entry's 'name' wins over its
+    'index' when the two disagree and the name is in the XPR2; one past
+    the last texture is the car's paint or vinyl sheet ('paint')."""
+    if not names:
+        return
+    for t in d.get('textures', []):
+        name = t.get('name')
+        if not name or t.get('xpr', 0) != 0:
+            continue
+        idx = t.get('index')
+        cur = names[idx] if isinstance(idx, int) and 0 <= idx < len(names) else None
+        if name == cur:
+            continue
+        if name in names:
+            t['index'] = names.index(name)
+        elif name in ('paint', 'tex%d' % len(names)):
+            t['index'] = len(names)
 
-    For each draw, every field in EDITABLE whose readable value differs
-    from the raw record's is written into the record; all other bytes stay
-    as they are. Texture indices can change, not how many textures are
-    bound (+0x06C and +0x0D8 follow the count; not worked out). The
-    shader is given by id ('vs_02 + ps_03') and must be one of the part's
-    own pairs (the shader library comes later). Returns the changes as
-    text; raises EditError for an edit that can't be applied.
+
+def apply_draw_entry(rec, d, pairs, where, shader_slot=None):
+    """Write the editable fields of a readable draw entry d into record rec
+    (part_model.Draw, in place) where they differ from rec's own values.
+    pairs: the part's ShaderPairs (to name rec's shader). shader_slot:
+    shader ids ('vs_02 + ps_03') -> the part's slot for them, for a
+    shader the part may not have yet; without it the shader must be one
+    of pairs. Returns the changes as text; raises EditError."""
+    ids = [p.ids for p in pairs]
+    was = _readable_draw(rec, d.get('draw', 0), pairs, None)
+    changes = []
+    for name in EDITABLE:
+        if name not in d:
+            continue
+        new, old = d[name], was[name]
+        if name == 'textures':
+            new_idx = [(int(t.get('xpr', 0)), int(t['index'])) for t in new]
+            old_idx = [(t['xpr'], t['index']) for t in old]
+            if new_idx == old_idx:
+                continue
+            if len(new_idx) != len(old_idx):
+                raise EditError('%s: binds %d textures, the entry lists %d (the count can\'t change yet)'
+                                % (where, len(old_idx), len(new_idx)))
+            count = rec.get('texture_count')
+            xprs, texs = list(rec.get('texture_xprs')), list(rec.get('texture_indices'))
+            slots = [j for j in range(min(count, 8)) if texs[j] >= 0]
+            for j, (x, t) in zip(slots, new_idx):
+                xprs[j], texs[j] = x, t
+            rec.set('texture_xprs', xprs)
+            rec.set('texture_indices', texs)
+        elif name == 'shader':
+            if new == old:
+                continue
+            if new in ids:
+                rec.set('shader', ids.index(new))
+            elif shader_slot is not None:
+                rec.set('shader', shader_slot(new))
+            else:
+                raise EditError('%s: shader %s isn\'t one of this part\'s (%s)' % (where, new, ', '.join(ids)))
+        elif name == 'shared_shader':
+            if _shared_value(new) == _shared_value(old):
+                continue
+            rec.set('shared_shader', _shared_value(new))
+        elif isinstance(old, list):
+            if [round(float(x), 6) for x in new] == old:
+                continue
+            if len(new) != len(old):
+                raise EditError('%s: %s needs %d values' % (where, name, len(old)))
+            rec.set(name, [float(x) for x in new])
+        elif isinstance(old, float):
+            if round(float(new), 6) == old:
+                continue
+            rec.set(name, float(new))
+        else:
+            if int(new) == old:
+                continue
+            rec.set(name, int(new))
+        changes.append('%s: %s %s -> %s' % (where, name, old, new))
+    return changes
+
+
+def is_game_draw(d):
+    """A readable draw entry that edits the game's own record (not a record
+    taken from a material, not a new slot)."""
+    return not d.get('new') and not d.get('record_from')
+
+
+def apply_readable_edits(sc, names=None, shader_slot=None):
+    """Apply edits made in the readable half to the game's own records.
+
+    For each draw of the game's (is_game_draw), every field in EDITABLE
+    whose readable value differs from the raw record's is written into
+    the record; all other bytes stay as they are. Texture indices can
+    change (by index, or by name when names, the XPR2's texture names,
+    is given), not how many textures are bound (+0x06C and +0x0D8 follow
+    the count; not worked out). The shader is given by id ('vs_02 +
+    ps_03'): one of the part's own pairs, or any pair when shader_slot is
+    given (it brings the pair in, see apply_draw_entry). Draws taken from
+    a material or added (record_from, new) are the export's to edit.
+    Returns the changes as text; raises EditError.
     """
     raw = sc['raw']
-    _, pairs, _ = shaders.split_section(unb64(raw['shaders']))
-    ids = [p.ids for p in pairs]
     changes = []
     for shape, rshape in zip(sc['shapes'], raw['shapes']):
+        if shape.get('new'):
+            continue
         for d in shape['draws']:
+            if not is_game_draw(d):
+                continue
             k = d['draw']
+            if not 0 <= k < len(rshape['draws']):
+                continue
+            _, pairs, _ = shaders.split_section(unb64(raw['shaders']))
+            resolve_texture_names(d, names)
             rec = Draw(unb64(rshape['draws'][k]['record']))
-            was = _readable_draw(rec, k, pairs, None)
-            where = '%s draw %d' % (shape['name'], k)
-            for name in EDITABLE:
-                if name not in d:
-                    continue
-                new, old = d[name], was[name]
-                if name == 'textures':
-                    new_idx = [(t['xpr'], t['index']) for t in new]
-                    old_idx = [(t['xpr'], t['index']) for t in old]
-                    if new_idx == old_idx:
-                        continue
-                    if len(new_idx) != len(old_idx):
-                        raise EditError('%s: the number of textures can\'t change yet' % where)
-                    count = rec.get('texture_count')
-                    xprs, texs = list(rec.get('texture_xprs')), list(rec.get('texture_indices'))
-                    slots = [j for j in range(min(count, 8)) if texs[j] >= 0]
-                    for j, (x, t) in zip(slots, new_idx):
-                        xprs[j], texs[j] = int(x), int(t)
-                    rec.set('texture_xprs', xprs)
-                    rec.set('texture_indices', texs)
-                elif name == 'shader':
-                    if new == old:
-                        continue
-                    if new not in ids:
-                        raise EditError('%s: shader %s isn\'t one of this part\'s (%s)'
-                                        % (where, new, ', '.join(ids)))
-                    rec.set('shader', ids.index(new))
-                elif name == 'shared_shader':
-                    if _shared_value(new) == _shared_value(old):
-                        continue
-                    rec.set('shared_shader', _shared_value(new))
-                elif isinstance(old, list):
-                    if [round(float(x), 6) for x in new] == old:
-                        continue
-                    if len(new) != len(old):
-                        raise EditError('%s: %s needs %d values' % (where, name, len(old)))
-                    rec.set(name, [float(x) for x in new])
-                elif isinstance(old, float):
-                    if round(float(new), 6) == old:
-                        continue
-                    rec.set(name, float(new))
-                else:
-                    if int(new) == old:
-                        continue
-                    rec.set(name, int(new))
-                changes.append('%s: %s %s -> %s' % (where, name, old, new))
+            changes += apply_draw_entry(rec, d, pairs, '%s draw %d' % (shape['name'], k), shader_slot)
             rshape['draws'][k]['record'] = b64(rec.raw)
     return changes
 
@@ -440,6 +493,68 @@ def from_sidecar(sc, geometry=None):
         s.skin_normals = _skin_array(unb64(sk['normals']))
         part.shapes.append(s)
     return part
+
+
+def source_sha256(sc):
+    """The game file's hash. Add-on 1.0 kept it in the readable half."""
+    return (sc['raw'].get('source') or {}).get('sha256') or sc['part'].get('sha256')
+
+
+def template_entry(shape):
+    """What a new shape needs from a shape to copy its layout: the record,
+    the stream types and strides, the skin block and the skin arrays'
+    descriptors, the material block's head and tail. No geometry."""
+    return {'name': shape.name,
+            'record': b64(shape.raw),
+            'streams': [None if st is None else {'type': st.type, 'stride': st.stride}
+                        for st in shape.streams],
+            'material_block': {'head': b64(shape.material_block.head), 'tail': b64(shape.material_block.tail)},
+            'skin': {'raw': b64(shape.skin_raw), 'source_offset': shape.skin_source_offset,
+                     'positions': b64(shape.skin_positions.descriptor),
+                     'normals': b64(shape.skin_normals.descriptor)}}
+
+
+def _empty_stream(stype, stride):
+    return Stream(stype, stride, np.zeros((0, stride), np.uint8))
+
+
+def _template_skin_array(descriptor):
+    count, stype, stride, _ = np.frombuffer(bytes(descriptor[:16]), '>u4').tolist()
+    return SkinArray(bytes(descriptor[:16]), _empty_stream(stype, stride) if count else None)
+
+
+def template_from_entry(e):
+    """template_entry -> a part_model.Shape with empty streams, ready to
+    lend its layout (encode.encode_new_shape)."""
+    s = Shape(unb64(e['record']))
+    s.streams = [None if st is None else _empty_stream(st['type'], st['stride']) for st in e['streams']]
+    mb = e['material_block']
+    s.material_block = MaterialBlock(unb64(mb['head']), [], unb64(mb['tail']))
+    sk = e['skin']
+    s.skin_raw = unb64(sk['raw'])
+    s.skin_source_offset = sk['source_offset']
+    s.skin_positions = _template_skin_array(unb64(sk['positions']))
+    s.skin_normals = _template_skin_array(unb64(sk['normals']))
+    return s
+
+
+def shape_template(sc, i):
+    """Shape i of a sidecar as a layout template (no geometry needed)."""
+    r = sc['raw']['shapes'][i]
+    return template_from_entry({
+        'name': r['name'], 'record': r['record'],
+        'streams': [None if st is None else {'type': st['type'], 'stride': st['stride']} for st in r['streams']],
+        'material_block': r['material_block'],
+        'skin': {'raw': r['skin']['raw'], 'source_offset': r['skin']['source_offset'],
+                 'positions': b64(unb64(r['skin']['positions'])[:16]),
+                 'normals': b64(unb64(r['skin']['normals'])[:16])}})
+
+
+def shader_pair(sc, key):
+    """The shaders.ShaderPair with key 'vs_hash:ps_hash' in a sidecar's
+    shader section, or None."""
+    _, pairs, _ = shaders.split_section(unb64(sc['raw']['shaders']))
+    return next((p for p in pairs if p.vs_hash + ':' + p.ps_hash == key), None)
 
 
 def write_sidecar(path, sc):

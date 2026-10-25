@@ -22,4 +22,4 @@ set "REX_FULLSCREEN=false"
 set "REX_MNK_MODE=true"
 if "%REX_LOG_LEVEL%"=="" set "REX_LOG_LEVEL=info"
 
-"%exe%" %* --resolution=4k --resolution_scale=2 --fullscreen=false --subtick --max_fps=60
+"%exe%" %*  --subtick=true
