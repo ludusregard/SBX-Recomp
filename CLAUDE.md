@@ -21,6 +21,9 @@ Read the relevant doc before making changes; update it as you learn.
 - `docs/build_run.md`: building, running and testing.
 - `docs/audio.md`: XACT and XAudio, the sound banks, and the code that
   loads them. Check before work on sound; add what's worked out.
+- `docs/custom_music.md`: custom music (tracks from
+  `ADDON_DATA/CUSTOM_MUSIC/` in the place of the game's), how to use it and
+  how it works. Check before changing it or the XMA layer.
 - `docs/rexglue-removal.md`: ITC-Recomp's plan for a port without
   ReXGlue, kept as a reference (its addresses are ITC's). Check before
   planning any native subsystem.
@@ -77,4 +80,4 @@ ALWAYS check ITC-Recomp for changes since "Last reviewed" in
   here says otherwise.
 - American English (color, gray), plain and short, in code, comments,
   docs and commit messages.
-- No `-march=native`.
+- No `-march=native`.

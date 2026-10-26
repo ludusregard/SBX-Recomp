@@ -7,6 +7,7 @@
 #include <rex/rex_app.h>
 
 #include "audio/native_audio.h"
+#include "hooks/custom_music.h"
 #include "hooks/patch_loader.h"
 #ifdef SBX_NATIVE_RENDERER
 #include "base/log_sdk.h"
@@ -29,11 +30,12 @@ class SbxApp : public rex::ReXApp {
   // the SDK's).
   void OnPreSetup(rex::RuntimeConfig& config) override { native_audio::Configure(config); }
 
-  // PATCH_DATA is looked for in the game data root (src/hooks/patch_loader.cpp).
-  // With the native renderer, the movies are read from there too
-  // (src/movies/movie.cpp).
+  // PATCH_DATA is looked for in the game data root (src/hooks/patch_loader.cpp),
+  // and ADDON_DATA/CUSTOM_MUSIC (src/hooks/custom_music.cpp). With the native
+  // renderer, the movies are read from there too (src/movies/movie.cpp).
   void OnPostSetup() override {
     patch_loader::SetGameDataRoot(game_data_root());
+    custom_music::SetGameDataRoot(game_data_root());
 #ifdef SBX_NATIVE_RENDERER
     movies::movie::SetDataRoot(game_data_root());
 #endif

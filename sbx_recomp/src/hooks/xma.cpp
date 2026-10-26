@@ -23,13 +23,21 @@
 // sees more than it could on the 360. Lock, wait and unlock have nothing to
 // wait for; unlock decodes ahead.
 //
+// Custom music (src/hooks/custom_music.cpp): when a stereo sound starts (only
+// the music is stereo XMA) and a custom track was chosen for it, the stream
+// reads that track (audio::music::Track, same interface) instead of decoding
+// the XMA data. The game's loop count still applies (once, n times or
+// forever); its loop points don't (the track has its own).
+//
 // --native_xma=false (read once, at the first XMA object) runs the game's own
-// layer on the SDK's emulated XMA hardware instead.
+// layer on the SDK's emulated XMA hardware instead (no custom music).
 
 #include "guest.h"
 
+#include "audio/music/track.h"
 #include "audio/xma_packets.h"
 #include "audio/xma_stream.h"
+#include "hooks/custom_music.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -65,6 +73,8 @@ struct StreamState {
   uint32_t staging_samples = 0;
   uint32_t consumed = 0;
   audio::xma::Stream stream;
+  // A custom music track playing in the place of the sound, or none.
+  std::unique_ptr<audio::music::Track> custom;
 };
 
 struct Object {
@@ -97,8 +107,50 @@ uint32_t Ahead(const StreamState& s) {
   return std::max(s.ring_samples * 2, kMinimumAhead);
 }
 
+// The sound's samples: the custom track's if one plays in its place, else
+// the XMA stream's.
+bool Playing(const StreamState& s) {
+  return s.custom ? s.custom->playing() : s.stream.playing();
+}
+
+void DecodeAhead(StreamState& s) {
+  if (s.custom) {
+    s.custom->DecodeAhead(Ahead(s));
+    if (s.custom->WantsNext()) {
+      // Shuffle: the next track, ready before this one ends. Without one the
+      // track loops.
+      auto next = custom_music::NextTrack(s.sample_rate, s.channels, Ahead(s));
+      if (next) {
+        s.custom->Chain(std::move(next));
+      } else {
+        s.custom->SetShuffle(false);
+      }
+    }
+  } else {
+    s.stream.DecodeAhead(Ahead(s));
+  }
+}
+
+uint32_t Contiguous(const StreamState& s, uint32_t cap) {
+  return s.custom ? s.custom->Contiguous(cap) : s.stream.Contiguous(cap);
+}
+
+uint32_t ReadyCount(const StreamState& s, uint32_t cap) {
+  return s.custom ? s.custom->Ready(cap) : s.stream.Ready(cap);
+}
+
+uint32_t Consume(StreamState& s, uint32_t count) {
+  return s.custom ? s.custom->Consume(count) : s.stream.Consume(count);
+}
+
+const uint8_t* SamplesAtPosition(const StreamState& s) {
+  return s.custom ? s.custom->SamplesAt(s.custom->position())
+                  : s.stream.SamplesAt(s.stream.position());
+}
+
 void FreeBuffer(StreamState& s) {
   s.stream.End();
+  s.custom.reset();
   if (s.staging) {
     Memory()->SystemHeapFree(s.staging);
     s.staging = 0;
@@ -109,10 +161,9 @@ void FreeBuffer(StreamState& s) {
 // Copies the samples readable in one go from the position (at most the
 // ring's size) into the staging buffer; returns how many.
 uint32_t Stage(uint8_t* base, StreamState& s) {
-  const uint32_t count = std::min(s.stream.Contiguous(s.ring_samples), s.staging_samples);
+  const uint32_t count = std::min(Contiguous(s, s.ring_samples), s.staging_samples);
   if (count) {
-    std::memcpy(REX_RAW_ADDR(s.staging), s.stream.SamplesAt(s.stream.position()),
-                size_t(count) * s.channels * 2);
+    std::memcpy(REX_RAW_ADDR(s.staging), SamplesAtPosition(s), size_t(count) * s.channels * 2);
   }
   return count;
 }
@@ -140,6 +191,14 @@ bool Start(uint8_t* base, StreamState& s, uint32_t data, uint32_t size) {
     REXLOG_ERROR("xma: no system heap for {} bytes", bytes);
     return false;
   }
+  if (s.channels == 2) {
+    s.custom = custom_music::TakeTrack(data, host, size, s.sample_rate, s.channels, Ahead(s));
+    if (s.custom) {
+      s.custom->SetShuffle(custom_music::Shuffle());
+      s.input = data;
+      return true;
+    }
+  }
   if (!s.stream.Begin(host, size, s.channels, s.sample_rate)) {
     REXLOG_ERROR("xma: couldn't start the decoder ({} channels, {} Hz)", s.channels,
                  s.sample_rate);
@@ -153,12 +212,12 @@ bool Start(uint8_t* base, StreamState& s, uint32_t data, uint32_t size) {
 
 // The stream's sound is still playing (its input "valid" to the voice).
 bool Valid(const StreamState& s) {
-  return s.input && s.stream.playing();
+  return s.input && Playing(s);
 }
 
 // Moves to a second sound once the first has played out.
 void Advance(uint8_t* base, StreamState& s) {
-  if (s.input && !s.stream.playing()) {
+  if (s.input && !Playing(s)) {
     FreeBuffer(s);
     if (s.pending) {
       const uint32_t data = s.pending, size = s.pending_size;
@@ -352,7 +411,7 @@ extern "C" REX_FUNC(sub_82445B90) {
     return;
   }
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
-    return s.input ? s.stream.Ready(s.ring_samples) : 0;
+    return s.input ? ReadyCount(s, s.ring_samples) : 0;
   });
 }
 
@@ -386,9 +445,9 @@ extern "C" REX_FUNC(sub_82445C08) {
       return 0;
     }
     Stage(base, s);  // what's taken, where the caller may read it
-    const uint32_t taken = s.stream.Consume(std::min(count, s.staging_samples));
+    const uint32_t taken = Consume(s, std::min(count, s.staging_samples));
     s.consumed += taken;
-    s.stream.DecodeAhead(Ahead(s));
+    DecodeAhead(s);
     return taken;
   });
 }
@@ -442,6 +501,14 @@ extern "C" REX_FUNC(sub_82445F80) {
   const uint32_t skip = guest::LoadU8(base, loop + 9) & 7;
   const uint32_t count = guest::LoadU8(base, loop + 10);
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
+    if (s.custom) {
+      // Loop as often as the game's sound would, over the track's own region.
+      s.custom->SetLoopCount(count);
+      if (custom_music::Logging()) {
+        REXLOG_INFO("custom_music: loop count {} from the game", count);
+      }
+      return 0;
+    }
     s.stream.SetLoop(start_bit, end_bit, skip, end_subframe, count);
     return 0;
   });
@@ -456,7 +523,9 @@ extern "C" REX_FUNC(sub_82446088) {
   }
   const uint32_t bit = ctx.r5.u32 & 0x3FFFFFF, skip = ctx.r6.u32 & 7;
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
-    s.stream.SetStart(bit, skip);
+    if (!s.custom) {  // a custom track starts at its start
+      s.stream.SetStart(bit, skip);
+    }
     return 0;
   });
 }
@@ -503,7 +572,7 @@ extern "C" REX_FUNC(sub_82446490) {
     std::lock_guard lock(object->mutex);
     for (auto& s : object->streams) {
       Advance(base, *s);
-      s->stream.DecodeAhead(Ahead(*s));
+      DecodeAhead(*s);
     }
   }
   ctx.r3.u64 = 0;

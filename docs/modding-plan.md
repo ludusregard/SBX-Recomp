@@ -1,7 +1,9 @@
 # Modding plan
 
 A plan for mod support beyond today's file replacement, kept for later
-reference. Nothing here is built yet except the patch loader. Function names
+reference. Nothing here is built yet except the patch loader, and custom
+music (`assets/ADDON_DATA/CUSTOM_MUSIC/`, `docs/custom_music.md`), which
+reads its own folder and needs neither loader. Function names
 and data formats are in `docs/functions.md` and `docs/game_data.md`.
 
 ## Two loaders

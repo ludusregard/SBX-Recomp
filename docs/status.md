@@ -38,6 +38,19 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   Example: `00000072.bin` and `00000072.dat` are both id `00000072` and would both be valid. 
   (`src/hooks/patch_loader.cpp`, `--patch_loader`, on by default; see
   `docs/game_data.md`, "Patch data"). Not yet tested.
+- Custom music: tracks from `assets/ADDON_DATA/CUSTOM_MUSIC/<CATEGORY>/`
+  (ogg, opus, flac, mp3, wav) play in the place of the game's music by a
+  roll at each music start (`--new_music_roll`, 0 by default, or a folder's
+  `metadata.xml`), with weights and loop regions; `--custom_music` (on by
+  default), `--custom_music_log`, `--custom_music_shuffle` (on by default) (`src/hooks/custom_music.cpp`,
+  `src/audio/music/`, `docs/custom_music.md`). FFmpeg now also has the
+  ogg, flac, mp3 and wav demuxers, their decoders and libswresample.
+  Built on Windows and working in the game (2026-10-26): the menu songs,
+  roaming, looping and shuffle. The category folders and a user guide
+  (`CUSTOM_MUSIC_README.md`) are in `assets/ADDON_DATA/CUSTOM_MUSIC/`.
+  The categories (MENU_COURSE, MENU_MAIN, MENU_GENERAL, MENU_STORY, ROAMING, BATTLE, BOSS, RACE_WIN, RACE_LOSE) are from the code
+  ("Music" in `docs/audio.md`); BATTLE, BOSS, RACE_WIN and RACE_LOSE are
+  still to confirm in play (each music start is logged with its caller).
 - Cut car wheels: the ECLI gets its own stock wheel instead of AD00, and
   the L86, S30 and T86 the BOSS00's wheel (`--cut_car_wheels`), or the
   LORRY's steel wheels (`--cut_car_steelies`); both on by default

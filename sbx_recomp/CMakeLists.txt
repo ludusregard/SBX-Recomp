@@ -99,6 +99,7 @@ set(SBX_SOURCES
     src/audio/output_mix.cpp
     src/debug/frame_state_diff.cpp
     src/hooks/create_file.cpp
+    src/hooks/custom_music.cpp
     src/hooks/cut_car_wheels.cpp
     src/hooks/lights.cpp
     src/hooks/patch_loader.cpp
@@ -156,14 +157,25 @@ rexglue_setup_target(sbx GPU_PLUGINS xenos)
 target_include_directories(sbx PRIVATE src)
 
 # Upstream FFmpeg from sbx_recomp/thirdparty, built with ITC-Recomp's configs
-# (cmake/ffmpeg.cmake), in both builds: our XMA decoding (src/audio/xma_*,
-# src/hooks/xma.cpp; ITC's B2) uses its xma2 decoder, in a library of its own
-# so only our FFmpeg's headers reach it (the SDK has its own FFmpeg).
+# plus what custom music needs (cmake/ffmpeg.cmake), in both builds: our XMA
+# decoding (src/audio/xma_*, src/hooks/xma.cpp; ITC's B2) uses its xma2
+# decoder, in a library of its own so only our FFmpeg's headers reach it (the
+# SDK has its own FFmpeg).
 include(cmake/ffmpeg.cmake)
 add_library(sbx_xma STATIC src/audio/xma_packets.cpp src/audio/xma_stream.cpp)
 target_include_directories(sbx_xma PUBLIC src)
 target_link_libraries(sbx_xma PRIVATE sbx_avcodec)
 target_link_libraries(sbx PRIVATE sbx_xma)
+# Custom music (src/audio/music/, src/hooks/custom_music.cpp,
+# docs/custom_music.md): music files read and resampled with our FFmpeg, in a
+# library of its own for the same reason.
+add_library(sbx_music STATIC
+    src/audio/music/library.cpp
+    src/audio/music/metadata.cpp
+    src/audio/music/track.cpp)
+target_include_directories(sbx_music PUBLIC src)
+target_link_libraries(sbx_music PRIVATE sbx_avformat sbx_swresample)
+target_link_libraries(sbx PRIVATE sbx_music)
 
 if(SBX_NATIVE_RENDERER)
     # The SDK's Xenos shader translator (to SPIR-V), built into our binary for

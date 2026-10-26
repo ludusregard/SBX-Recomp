@@ -1,0 +1,3 @@
+# Keeps this folder in git; your music and metadata.xml here stay out of it.
+*
+!.gitignore

@@ -15,8 +15,9 @@ run-debug.bat    rem the same with debug logging
   decrypted copy, `assets/default.xex.decrypt`.
 - `assets/PATCH_DATA/BUILD/TXR/BUILD/` is the Restored patch's archive files
   (a submodule). The patch loader reads them at boot; `--patch_loader=false` runs the game
-  without them (`docs/game_data.md`, "Patch data"). `assets/ADDON_DATA/` is for the addon
-  loader, not built yet.
+  without them (`docs/game_data.md`, "Patch data"). `assets/ADDON_DATA/CUSTOM_MUSIC/` is
+  custom music (`docs/custom_music.md`); the rest of the addon loader isn't
+  built yet.
 - After a fresh clone or a submodule update, run
   `python sbx_recomp/tools/fix_symlink_stubs.py` first
   (`docs/codegen.md`, "Windows build gotchas").

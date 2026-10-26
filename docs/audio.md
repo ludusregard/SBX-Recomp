@@ -83,13 +83,73 @@ from development; `bgm_tmp_18` could be a cut 18th track).
 - **Startup**: `sub_82094BB8` names the engine `txr_xact`;
   `sub_82118818` builds `data\audio\%s.xgs` and reads the global settings.
 - **Music**: `Bgm::Load` (`sub_82106540`) takes a bank name, finds it in
-  the table at `0x820069B0` (`bgm_tmp_01`-`17`, `BGM_SYSTEM`) and loads
+  its list (`bgm_tmp_01`-`17`, `BGM_SYSTEM`, built on the stack from the
+  strings at `0x820069B0`, which are stored in another order) and loads
   sound bank 22970 + i and wave bank 22988 + i; any other name loads
   `SB_SYSTEM_SE` (22885, 22886). It hands both ids to the sound object at
-  `[0x826B5960]` (vtable slot 4).
+  `[0x826B5960]` (vtable slot 4). Who picks the music: "Music" below.
 - **Car effects**: `sub_821744D8` loads `CAR_SE.XWB` (22887).
 - **Engine sounds**: the loader of 22888-22969 isn't found yet (the id is
   computed from the car's sound set).
+
+## Music
+
+Every change of music bank is a call to `Bgm::Load` (the menu bank's four
+songs are the exception, below). Its callers, by return
+address (custom music uses these as its categories, `docs/custom_music.md`;
+the labels are from the code, not yet checked in play):
+
+| Return address | Function | Music | Category |
+|---|---|---|---|
+| `0x82107B38` | `sub_82107A38` | `BGM_SYSTEM` (once; its four songs are started by cue, no more loads) | MENU_COURSE, MENU_MAIN, MENU_GENERAL, MENU_STORY (told apart by the sound's data) |
+| `0x82173D80` | `Music::PlayRoaming` (`sub_82173C70`) | `bgm_tmp_06`, or one of 07, 01, 15, 05, 10 at random | ROAMING |
+| `0x8217424C` | `Music::PlayRequested` (`sub_821741B8`), bit 0x40 | `bgm_tmp_07`, 01 or 15 by `[[0x826B580C]+32]` (0, 1, 2) | BATTLE |
+| `0x8217427C` | the same, bit 0x100 | `bgm_tmp_10` | BATTLE |
+| `0x821742AC` | the same, bit 0x80 | `bgm_tmp_05` | BATTLE |
+| `0x821742DC` | the same, bit 0x200 | `bgm_tmp_03` | BOSS |
+| `0x8217430C` | the same, bit 0x400 | `bgm_tmp_09` | BOSS |
+| `0x8217433C` | the same, bit 0x800 | `bgm_tmp_17` | BOSS |
+| `0x8217436C` | the same, bit 0x1000 | `bgm_tmp_11` | BOSS |
+| `0x8217439C` | the same, bit 0x2000 | `bgm_tmp_16` | BOSS |
+| `0x82174C84` | `sub_82174AD0` | `bgm_tmp_08` (the lose music) | RACE_LOSE |
+| `0x82262678` | `sub_822624F0` | `bgm_tmp_14` (the win music) | RACE_WIN |
+| `0x822626B0` | the same | `bgm_tmp_08` | RACE_LOSE |
+| `0x821B8788` | `sub_821B8580` | any of the 17, by a setting (`[[r31+32544]+740]`): the music select | never replaced |
+| `0x82110280` | `sub_82110180` | `SB_SYSTEM_SE` (sound effects, at boot) | never replaced |
+
+- **`BGM_SYSTEM`** is loaded once and holds four songs (one wave each, in
+  the wave bank's order), started by cue with no further `Bgm::Load`. From
+  the disc's `BGM_SYSTEM.xwb` (its cues, in the sound bank's order:
+  `COURSEIN`, `GARAGE`, `PA`, `TITLE`):
+
+  | Wave | Wave data (offset, length) | Length | CRC-32 of its first 2048 bytes | Used for (from play) |
+  |---|---|---|---|---|
+  | 0 | 0x0, 0x1BD000 | 61.8 s | `E3A47B25` | course select |
+  | 1 | 0x1BD000, 0xBA800 | 27.2 s | `E66C2C17` | main menu |
+  | 2 | 0x277800, 0x18F800 | 49.0 s | `C448EE59` | other menus (dialogs, garage, car select) |
+  | 3 | 0x407000, 0x12B000 | 39.0 s | `4FEB9978` | dialog after some story events |
+
+  (Offsets from the wave data's start, 0x800 into the file. The cue names
+  don't obviously match the uses, so the wave numbers are the user's
+  report of which index each scene starts; check with
+  `--custom_music_log`.)
+- **The random roll** is in `Music::PlayRoaming`: by the music mode at
+  scene+9652 (set by `sub_82175238` from a table indexed by the game
+  state), modes 2, 4, 5 and 6 pick entry 1-5 of the table at `0x82609334`
+  with `sub_8258F558() % 5`; other modes play entry 0. It's called when
+  the highway scene starts (`sub_821744D8`, which also loads `CAR_SE.XWB`)
+  and from `sub_82174668`.
+- **The table at `0x82609334`**: 13 name pointers, entries 0-12:
+  `bgm_tmp_06`, 07, 01, 15, 05, 10, 03, 09, 17, 11, 16, 14, 08.
+- **Battle music** is requested by `Music::RequestBattle` (`sub_821743B0`)
+  as a bit at scene+9644, by the opponent: its record (`sub_821172E0`)
+  byte +35 is the rival's class. No opponent, class 0 or above 5: 0x40;
+  class 1: 0x100; class 2: 0x80; class 3: 0x400 for rivals 383-390, 0x800
+  for 392-397, else 0x200; class 4: 0x800 for rival 391, 0x1000 for 398,
+  else 0x400; class 5: 0x2000. `Music::PlayRequested` then plays it and
+  clears the bit.
+- The scene is the object these message handlers run on (r3); all of them
+  are registered by `sub_82175238`.
 
 ## Not known yet
 
@@ -98,3 +158,6 @@ from development; `bgm_tmp_18` could be a cut 18th track).
 - The sound object at `[0x826B5960]`: its class and its other methods.
 - How XACT's runtime variables are fed from the car (revs, throttle,
   load).
+- Which rival classes are which (wanderers, team members, bosses), to
+  check the BATTLE and BOSS labels; and what the music modes 1-6 and
+  `[[0x826B580C]+32]` are.

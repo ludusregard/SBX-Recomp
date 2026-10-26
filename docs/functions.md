@@ -126,7 +126,7 @@ with no row); run it after changing either.
 | `sub_8209AD48` |  |  | Read error: ends in `sub_82292D50`, which shows the dirty-disc screen (`XamShowDirtyDiscErrorUI`). |
 | `sub_82572370` |  |  | Reads a whole opened file into a buffer (r3 the file, r4 the buffer, r5 a pointer to the size); used for the TOCs and `DEBFONT.XPR`. |
 | `sub_820CC048` |  |  | Loads the parameter tables, BUILD 72-83 (72 = car specs) through `Archive::Load`; `sub_820C9700` sizes them first. |
-| `sub_821744D8` |  |  | Loads BUILD 22887, the loose `DATA\AUDIO\CAR_SE.XWB`. |
+| `sub_821744D8` |  |  | Loads BUILD 22887, the loose `DATA\AUDIO\CAR_SE.XWB`, and starts the music (`Music::PlayRoaming`): a message handler of the scene (`sub_82175238`). |
 | `sub_82094BB8` |  |  | Startup; names the XACT engine `txr_xact` and calls `sub_821066D0` (which calls `Archive::Init`). |
 | `sub_8228CEE8` |  |  | One of four functions (with `sub_8228CFA8`, `sub_8228D228`, `sub_8228D370`) that open the save, `TXR360:\TXR_DATA_1`. |
 | `sub_82105790` | `GameData::Get` |  | r3 an index: returns the pointer at `0x826B5838` + 4 x r3. Index 0 is the save (`docs/game_data.md`). |
@@ -190,7 +190,14 @@ with no row); run it after changing either.
 | `sub_8220F7B0` |  |  | Draws the rival's logo. |
 | `sub_8246BD88` | `MoviePlayer::OpenFile` |  | The movie player's file open (through a vtable); calls `CreateFile`. |
 | `sub_820AE840` |  |  | The render thread's command that starts the boot movie. |
-| `sub_82106540` | `Bgm::Load` |  | r4 a bank name: looks it up in the table at `0x820069B0` (`bgm_tmp_01`-`17`, `BGM_SYSTEM`) and loads its sound bank (BUILD 22970 + i) and wave bank (22988 + i), or `SB_SYSTEM_SE` (22885, 22886) for any other name, through the sound object at `[0x826B5960]` (vtable slot 4). See `docs/audio.md`. |
+| `sub_82106540` | `Bgm::Load` | Wrapped | r4 a bank name: looks it up in the table at `0x820069B0` (`bgm_tmp_01`-`17`, `BGM_SYSTEM`) and loads its sound bank (BUILD 22970 + i) and wave bank (22988 + i), or `SB_SYSTEM_SE` (22885, 22886) for any other name, through the sound object at `[0x826B5960]` (vtable slot 4). See `docs/audio.md`. Who calls it, by return address: "Music" in `docs/audio.md`. Custom music rolls first, by the caller (`src/hooks/custom_music.cpp`). |
+| `sub_82173C70` | `Music::PlayRoaming` |  | r3 the scene: by its music mode (+9652), modes 2, 4, 5, 6 play one of entries 1-5 of `0x82609334` with `sub_8258F558() % 5` (the game's random roll), other modes entry 0 (`bgm_tmp_06`). From `sub_821744D8` and `sub_82174668`. |
+| `sub_821741B8` | `Music::PlayRequested` |  | r3 the scene: plays the music each bit at +9644 requests and clears it (0x40, 0x80, 0x100, 0x200-0x2000: "Music" in `docs/audio.md`). |
+| `sub_821743B0` | `Music::RequestBattle` |  | r3 the scene: sets the music bit at +9644 for the opponent, by its record's (`sub_821172E0`) class byte (+35) and its id ("Music" in `docs/audio.md`). |
+| `sub_82174AD0` |  |  | Message handler of the scene: plays entry 12 of `0x82609334` (`bgm_tmp_08`, race-end music) under conditions. |
+| `sub_822624F0` |  |  | Plays `bgm_tmp_14` or `bgm_tmp_08` by comparing +9672 and +9668 of r31 (race end, by the custom music categories; not checked). |
+| `sub_821B8580` |  |  | Plays one of the 17 `bgm_tmp_` tracks by a setting (`[[r31+32544]+740]`, 0 = `bgm_tmp_01`): the music select. |
+| `sub_82175238` |  |  | Registers the scene's message handlers (the music ones above, `sub_821744D8`, ...) and sets its music mode (+9652) from a table indexed by the game state. |
 | `sub_82118818` |  |  | Builds `data\audio\%s.xgs` and reads the XACT global settings (`TXR_XACT.XGS`). |
 | `sub_8244D0A0` | `AudioRenderDriver::Register` |  | r3 the driver object (callback argument +12, handle +16), r4 the mixer callback: `XAudioRegisterRenderDriverClient`. Reached only through a vtable. |
 | `sub_8244D128` | `AudioRenderDriver::Submit` |  | r4 the mixed buffer (descriptor from `sub_82448738`): `XAudioSubmitRenderDriverFrame`. |
@@ -551,8 +558,10 @@ reflections; UI movie tracks that add to values
 | car+16 | Car's world matrix, for drawing | Copied by `Car::TickUpdate` each tick. |
 | car+696, +700, +704 | Speed (km/h), revs, boost | Set each tick by `Car::TickUpdate`; read by the dash dials. `Car::DrawUpdate` takes 1.0 off +704 every pass. |
 | view+8080, view+8144 | This tick's and the previous tick's view-projection | Copied into vertex c100 by `View::UploadPreviousViewProjection` (the motion blur). |
-| `0x820069B0` | Music bank names | 18 strings, 12 bytes apart, read by `Bgm::Load`. |
+| `0x820069B0` | Music bank names | 18 strings, 12 bytes apart (`BGM_SYSTEM`, `bgm_tmp_17` down to 01 without 10, then 10), read by `Bgm::Load`. |
 | `[0x826B5960]` | The sound object | `Bgm::Load` calls its vtable slot 4 to load a bank pair. |
+| `0x82609334` | Music table | 13 name pointers: `bgm_tmp_06`, 07, 01, 15, 05, 10, 03, 09, 17, 11, 16, 14, 08. Read by `Music::PlayRoaming`, `Music::PlayRequested`, `sub_82174AD0`. |
+| scene+9644, +9652 | Music request bits, music mode | The scene the music handlers run on (`sub_82175238`): +9644 the bits `Music::RequestBattle` sets and `Music::PlayRequested` plays; +9652 the mode `Music::PlayRoaming` reads. |
 | `[0x826B2B28]` | Parameter tables | +8 BUILD 73 (wheels), +12 BUILD 72 (car specs), +16 to +48 BUILD 74-82 (aero parts), +56 the car count. Built by `sub_820C9700`, loaded by `sub_820CC048`. |
 | car+1644 | A car object's tuning | +8 engine stage, +16 to +60 the power and drive-train part levels, +64 to +92 tires and wheels, +96 to +136 the aero part levels (`docs/game_data.md`, "How the game uses the car specs"). |
 
