@@ -32,7 +32,6 @@
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
-REXCVAR_DECLARE(bool, tick_rate_60);
 
 namespace {
 
@@ -202,8 +201,7 @@ extern "C" REX_FUNC(sub_820F5610) {
 // - the action mappers' update (sub_8210B140, subtick/input.cpp).
 // On render-only passes each of these is put back after the call (only a
 // step of one: a fade the call starts is kept), so they count ticks; the
-// fade is still drawn every frame, at the tick's alpha. With --tick_rate_60
-// the play time's one is taken back every other call, so it counts real time.
+// fade is still drawn every frame, at the tick's alpha.
 namespace {
 constexpr uint32_t kFadeOutCounts = 0x82694DBC;  // 2 layers
 constexpr uint32_t kFadeInCounts = 0x82694DC4;   // 2 layers
@@ -214,15 +212,8 @@ constexpr std::array<uint32_t, 5> kPerTickCounts = {
 
 extern "C" REX_FUNC(sub_82107A38) {
   REX_FUNC_PROLOGUE();
-  static bool take_back = false;
-  bool undo = false;
   bool render_only = RenderOnly();
-  if (render_only) {
-    undo = true;
-  } else if (REXCVAR_GET(tick_rate_60)) {
-    undo = take_back;
-    take_back = !take_back;
-  }
+  bool undo = render_only;
   if (undo) {
     guest::StoreU32(base, kPlayTimeFrames, guest::LoadU32(base, kPlayTimeFrames) - 1);
   }

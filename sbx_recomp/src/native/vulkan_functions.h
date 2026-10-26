@@ -119,4 +119,8 @@ bool LoadGlobal(PFN_vkGetInstanceProcAddr get_instance_proc_addr);
 bool LoadInstance(VkInstance instance);
 bool LoadDevice(VkDevice device);
 
+// The loader's vkGetInstanceProcAddr (from LoadGlobal), for code that loads
+// its own functions (the overlay's ImGui back-end).
+PFN_vkGetInstanceProcAddr GetInstanceProcAddr();
+
 }  // namespace native::vk

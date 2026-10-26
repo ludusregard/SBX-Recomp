@@ -10,15 +10,22 @@
 #include "native/textures.h"
 #endif
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include <algorithm>
 #include <atomic>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
+REXCVAR_DEFINE_BOOL(log_message_handlers, false, "SBX",
+                    "Diagnostic: log the Update and Draw message handlers a logic pass "
+                    "delivers to whenever they change (entering a screen: finds its draw step, "
+                    "as Race::DrawStep is the race's)");
 
 namespace subtick {
 
@@ -53,6 +60,26 @@ uint64_t g_passes = 0;
 // For other threads (the native renderer's diagnostics): the pass as of its
 // start, packed as number * 2 + render-only.
 std::atomic<uint64_t> g_pass_any_thread{0};
+// --log_message_handlers: (message, target) delivered this logic pass, and
+// the set last logged.
+std::vector<std::pair<uint32_t, uint32_t>> g_pass_handlers, g_logged_handlers;
+
+void LogHandlersIfChanged() {
+  std::sort(g_pass_handlers.begin(), g_pass_handlers.end());
+  g_pass_handlers.erase(std::unique(g_pass_handlers.begin(), g_pass_handlers.end()),
+                        g_pass_handlers.end());
+  if (!g_pass_handlers.empty() && g_pass_handlers != g_logged_handlers) {
+    std::string update, draw;
+    for (auto [message, target] : g_pass_handlers) {
+      std::string& list = message == kDraw ? draw : update;
+      list += fmt::format(" {:08X}", target);
+    }
+    REXLOG_INFO("message handlers (pass {}): Update:{}; Draw:{}", g_passes,
+                update.empty() ? " none" : update, draw.empty() ? " none" : draw);
+    g_logged_handlers = g_pass_handlers;
+  }
+  g_pass_handlers.clear();
+}
 
 // Delivers one message to each handler.
 void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t message) {
@@ -71,6 +98,9 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t messa
     uint32_t target = (method == kDelegateInvoke || method == kMemberDelegateInvoke)
                           ? guest::LoadU32(base, object + 8)
                           : method;
+    if (REXCVAR_GET(log_message_handlers) && !g_render_only_pass) {
+      g_pass_handlers.emplace_back(message, target);
+    }
     ctx.r3.u64 = object;
     ctx.r4.u64 = dispatcher;
     ctx.lr = kHandlerCallReturn;
@@ -107,6 +137,9 @@ void DispatchMessages(PPCContext& ctx, uint8_t* base, uint32_t dispatcher) {
 void GameMessages_OnPassFinished() {
   if (g_render_only_pass) {
     return;
+  }
+  if (REXCVAR_GET(log_message_handlers)) {
+    LogHandlersIfChanged();
   }
   // The pass that just ran was a logic pass: it decides whether we're in a
   // race.
@@ -152,18 +185,42 @@ void GameMessages_PassFromAnyThread(uint64_t& number, bool& render_only, bool& m
 // handlers need to be known or Update skipped; otherwise the original runs.
 extern "C" REX_FUNC(sub_82106478) {
   REX_FUNC_PROLOGUE();
-  if (!REXCVAR_GET(subtick)) {
+  if (!REXCVAR_GET(subtick) && !REXCVAR_GET(log_message_handlers)) {
     __imp__sub_82106478(ctx, base);
     return;
   }
   subtick::DispatchMessages(ctx, base, ctx.r3.u32);
 }
 
+// Scene::Draw: r3 = the scene (as Scene::Update's). Calls the current mode
+// object's (+64) draw, its vtable slot 5. Hooked for --log_message_handlers:
+// logs the mode object and that draw whenever they change.
+extern "C" REX_FUNC(sub_82098E68) {
+  REX_FUNC_PROLOGUE();
+  if (REXCVAR_GET(log_message_handlers)) {
+    static uint32_t last_mode = 0, last_draw = 0;
+    uint32_t scene = ctx.r3.u32;
+    uint32_t mode = scene ? guest::LoadU32(base, scene + 64) : 0;
+    uint32_t vtable = mode ? guest::LoadU32(base, mode) : 0;
+    // Only a vtable in the image's data is read through.
+    uint32_t draw = (vtable >= 0x82000000u && vtable < 0x82A00000u)
+                        ? guest::LoadU32(base, vtable + 5 * 4)
+                        : 0;
+    if (mode != last_mode || draw != last_draw) {
+      REXLOG_INFO("message handlers: scene {:08X} mode {:08X} (vtable {:08X}), its draw {:08X}",
+                  scene, mode, vtable, draw);
+      last_mode = mode;
+      last_draw = draw;
+    }
+  }
+  __imp__sub_82098E68(ctx, base);
+}
+
 // Race::DrawStep: noted to tell races from menus.
 extern "C" REX_FUNC(sub_82159540) {
   REX_FUNC_PROLOGUE();
   subtick::g_race_draw_step_seen = true;
-  hooks::TitleScreen_OnRaceDrawn();  // ends --skip_intro's fast menus
+  hooks::TitleScreen_OnRaceDrawn();  // ends --skip_cutscenes's fast menus
   // The cars' matrices are blended between ticks for the step, so the camera
   // built from them moves with the cars (car_transforms.cpp).
   // The camera passes' view-projections for this frame first (render-only

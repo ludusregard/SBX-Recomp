@@ -116,7 +116,6 @@ set(SBX_SOURCES
     src/subtick/input_weights.cpp
     src/subtick/per_frame_logic.cpp
     src/subtick/renderer_hooks.cpp
-    src/tick_rate/tick_rate.cpp
     src/resources/app.rc
 )
 if(SBX_NATIVE_RENDERER)
@@ -129,6 +128,7 @@ if(SBX_NATIVE_RENDERER)
         src/native/disk_cache.cpp
         src/native/draw_packets.cpp
         src/native/gpu_link.cpp
+        src/native/overlay.cpp
         src/native/passes.cpp
         src/native/renderer.cpp
         src/native/replay_hooks.cpp
@@ -210,6 +210,19 @@ if(SBX_NATIVE_RENDERER)
     target_include_directories(sbx PRIVATE
         ${REXSDK_DIR}/thirdparty/vulkan-headers/include
         ${REXSDK_DIR}/thirdparty/xxHash)
+
+    # The overlay's ImGui back-ends (src/native/overlay.cpp): SDL3 and
+    # Vulkan, from the SDK's ImGui checkout. ImGui itself is the SDK's, in
+    # rexruntime (all its symbols exported); Vulkan is loaded at runtime, so
+    # the Vulkan back-end takes its functions from us (no prototypes).
+    set(SBX_IMGUI_BACKENDS
+        ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_sdl3.cpp
+        ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_vulkan.cpp)
+    target_sources(sbx PRIVATE ${SBX_IMGUI_BACKENDS})
+    set_source_files_properties(${SBX_IMGUI_BACKENDS} PROPERTIES
+        COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+        COMPILE_OPTIONS -w)
+    target_include_directories(sbx PRIVATE ${REXSDK_DIR}/thirdparty/imgui/backends)
 endif()
 
 # SDL (SDL3.dll, shared with rexruntime): the SDK's headers, for our audio

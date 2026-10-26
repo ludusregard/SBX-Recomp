@@ -5,6 +5,7 @@
 #include "buffers.h"
 #include "gpu_memory.h"
 #include "app_window.h"
+#include "overlay.h"
 #include "state.h"
 
 #include "passes.h"
@@ -119,22 +120,26 @@ ITC_FLAG_BOOL(motion_blur, true, "SBX",
 ITC_FLAG_BOOL(cmaa2, false, "SBX",
               "Anti-alias the 3D view with Intel's CMAA2 (on top of the game's 2x MSAA), "
               "before the post-processing reads it");
-ITC_FLAG_STRING(cmaa2_threshold, "0.025", "SBX",
+ITC_FLAG_STRING(cmaa2_threshold, "0.05", "SBX",
                 "CMAA2's edge threshold: lower finds more edges (Intel's presets: 0.15 low, "
                 "0.10 medium, 0.07 high, 0.05 ultra). Read when the first race starts");
-ITC_FLAG_STRING(frame_blend, "0", "SBX",
-                "Motion blur by blending the 3D view's rendered frames over a 1/30 s shutter "
-                "(the game's 30 Hz tick), kept off the centre of the screen. Its strength "
-                "(0-1; 0: off). Needs --subtick and a --max_fps above 30 to have frames to "
-                "blend. Read when the first race starts");
-ITC_FLAG_STRING(frame_blend_center, "0.3", "SBX",
-                "With frame_blend: the radius kept sharp (0 the centre, 1 the corners)");
-ITC_FLAG_STRING(frame_blend_edge, "0.9", "SBX",
-                "With frame_blend: the radius from where the blur is full");
-ITC_FLAG_STRING(frame_blend_shutter, "1/30", "SBX",
-                "With frame_blend: the shutter's length in seconds, or as a fraction (1/60). "
-                "A time, so the same at any frame rate; more frames fall in a longer shutter "
-                "(at most 16)");
+ITC_FLAG_BOOL(msaa, true, "SBX",
+              "Draw the game's multisampled targets with their MSAA (2x the race's 3D view, "
+              "4x the garage's). false: one sample each, cheaper, with --cmaa2/--fxaa as the "
+              "anti-aliasing instead. Read at startup");
+ITC_FLAG_STRING(blur_frame_blend, "0", "SBX",
+                "Experimental motion blur: the 3D view's recent frames averaged over a shutter "
+                "(blur_frame_blend_shutter), kept sharp at the centre of the screen. Its "
+                "strength (0-1; 0: off). More frames to blend with --subtick and a --max_fps "
+                "above 30. Read when the first race starts");
+ITC_FLAG_STRING(blur_frame_blend_center, "0.3", "SBX",
+                "With blur_frame_blend: the radius kept sharp (0 the centre, 1 the corners)");
+ITC_FLAG_STRING(blur_frame_blend_edge, "0.7", "SBX",
+                "With blur_frame_blend: the radius from where the blur is full");
+ITC_FLAG_STRING(blur_frame_blend_shutter, "1/8", "SBX",
+                "With blur_frame_blend: the shutter's length in seconds, or as a fraction "
+                "(1/30). A time, so the same at any frame rate; more frames fall in a longer "
+                "shutter (at most 16)");
 ITC_FLAG_BOOL(fxaa, false, "SBX",
               "Anti-alias the 3D view with FXAA (cheaper and softer than cmaa2; after it if "
               "both are on), before the post-processing reads it");
@@ -218,6 +223,7 @@ bool SDLCALL WatchWindowEvents(void*, SDL_Event* event) {
       event->window.windowID == g_window_id) {
     g_window_resized = true;
   }
+  overlay::OnEvent(*event, g_window_id);  // F3, F4 and the panels' input
   return true;
 }
 
@@ -372,6 +378,7 @@ class Renderer {
   VkFormat swapchain_format_ = VK_FORMAT_UNDEFINED;
   VkExtent2D swapchain_extent_{};
   std::vector<VkImage> swapchain_images_;
+  std::vector<VkImageView> swapchain_views_;  // for the overlay's drawing
   std::vector<VkSemaphore> render_done_;  // one per swapchain image
   bool swapchain_stale_ = false;
 
@@ -662,6 +669,16 @@ bool Renderer::CreateSwapchain() {
   vk::vkGetSwapchainImagesKHR(device_, swapchain_, &count, nullptr);
   swapchain_images_.resize(count);
   vk::vkGetSwapchainImagesKHR(device_, swapchain_, &count, swapchain_images_.data());
+  swapchain_views_.assign(count, VK_NULL_HANDLE);
+  for (uint32_t i = 0; i < count; i++) {
+    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = swapchain_images_[i];
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = format.format;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vk::vkCreateImageView(device_, &view, nullptr, &swapchain_views_[i]);
+  }
+  overlay::OnSwapchain(format.format, count);
   render_done_.resize(count);
   for (VkSemaphore& semaphore : render_done_) {
     VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
@@ -682,6 +699,12 @@ void Renderer::DestroySwapchain() {
     vk::vkDestroySemaphore(device_, semaphore, nullptr);
   }
   render_done_.clear();
+  for (VkImageView view : swapchain_views_) {
+    if (view) {
+      vk::vkDestroyImageView(device_, view, nullptr);
+    }
+  }
+  swapchain_views_.clear();
   swapchain_images_.clear();
   vk::vkDestroySwapchainKHR(device_, swapchain_, nullptr);
   swapchain_ = VK_NULL_HANDLE;
@@ -694,6 +717,18 @@ bool Renderer::Init(uint8_t* base) {
   }
   passes_.set_mirror_by_tick(ITC_FLAG(native_renderer_mirror_by_tick));
   passes_.set_mirror_to_both(ITC_FLAG(native_renderer_mirror_to_both));
+  // The ImGui overlay (F3, F4); the renderer runs without it if it can't.
+  overlay::InitInfo overlay_info;
+  overlay_info.window = window_;
+  overlay_info.api_version = VK_API_VERSION_1_3;
+  overlay_info.instance = instance_;
+  overlay_info.physical_device = physical_device_;
+  overlay_info.device = device_;
+  overlay_info.queue_family = queue_family_;
+  overlay_info.queue = queue_;
+  overlay_info.format = swapchain_format_;
+  overlay_info.image_count = uint32_t(swapchain_images_.size());
+  overlay::Init(overlay_info);
   return true;
 }
 
@@ -767,9 +802,10 @@ VkCommandBuffer Renderer::BeginFrame() {
                               uint32_t(std::max(ITC_FLAG(aa_resolve), 1)),
                               ITC_FLAG(aa_debug),
                               std::strtof(ITC_FLAG(cmaa2_threshold).c_str(), nullptr));
+    passes_.set_msaa(ITC_FLAG(msaa));
     // The shutter is a length in seconds, or a fraction such as 1/60.
-    float shutter = 1.0f / 30.0f;
-    if (const std::string& text = ITC_FLAG(frame_blend_shutter); !text.empty()) {
+    float shutter = 1.0f / 8.0f;
+    if (const std::string& text = ITC_FLAG(blur_frame_blend_shutter); !text.empty()) {
       const float value = std::strtof(text.c_str(), nullptr);
       if (const size_t slash = text.find('/'); slash != std::string::npos) {
         const float denominator = std::strtof(text.c_str() + slash + 1, nullptr);
@@ -778,9 +814,9 @@ VkCommandBuffer Renderer::BeginFrame() {
         shutter = value;
       }
     }
-    passes_.set_frame_blend(std::strtof(ITC_FLAG(frame_blend).c_str(), nullptr),
-                            std::strtof(ITC_FLAG(frame_blend_center).c_str(), nullptr),
-                            std::strtof(ITC_FLAG(frame_blend_edge).c_str(), nullptr), shutter);
+    passes_.set_frame_blend(std::strtof(ITC_FLAG(blur_frame_blend).c_str(), nullptr),
+                            std::strtof(ITC_FLAG(blur_frame_blend_center).c_str(), nullptr),
+                            std::strtof(ITC_FLAG(blur_frame_blend_edge).c_str(), nullptr), shutter);
     // Its first frame describes each draw (cheaply: the effect being looked
     // for went away while frames were recorded slowly).
     passes_.set_record_draws(dumping_ && dump_step_ == 0);
@@ -840,6 +876,7 @@ void Renderer::EndFrame() {
   commands_ += frame_commands_;
   draws_ += frame_draws_;
   uint32_t frame_draws = frame_draws_;
+  uint32_t frame_commands = frame_commands_;
   frame_commands_ = frame_draws_ = 0;
 
   VkCommandBuffer commands = BeginFrame();
@@ -860,6 +897,16 @@ void Renderer::EndFrame() {
                              false)
           : passes_.EndFrame(commands, ITC_FLAG(native_renderer_show_resolve), false);
   Frame& frame = frames_[frame_index_];
+
+  // For the overlay: this frame's time and work.
+  overlay::FrameInfo overlay_frame;
+  overlay_frame.frame_ms =
+      std::chrono::duration<double, std::milli>(Clock::now() - last_present_).count();
+  overlay_frame.commands = frame_commands;
+  overlay_frame.draws = frame_draws;
+  overlay_frame.source = source;
+  overlay_frame.window = swapchain_extent_;
+  overlay::OnFrame(overlay_frame);
 
   // Copy what's shown onto a swapchain image, if one can be had now.
   bool acquired = false;
@@ -912,13 +959,33 @@ void Renderer::EndFrame() {
     }
     vk::vkCmdBlitImage(commands, passes_.shown(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = 0;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    vk::vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                             &barrier);
+    if (overlay::Visible() && swapchain_views_[image_index]) {
+      // The overlay over the frame, at the window's resolution.
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask =
+          VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      vk::vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
+                               nullptr, 1, &barrier);
+      overlay::Draw(commands, swapchain_views_[image_index], swapchain_extent_, overlay_frame);
+      barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = 0;
+      barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      vk::vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                               &barrier);
+    } else {
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = 0;
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      vk::vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                               &barrier);
+    }
   }
   vk::vkEndCommandBuffer(commands);
   recording_ = false;

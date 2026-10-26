@@ -26,7 +26,7 @@
 
 #include <rex/cvar.h>
 
-REXCVAR_DEFINE_BOOL(subtick, false, "SBX",
+REXCVAR_DEFINE_BOOL(subtick, true, "SBX",
                     "Experimental: in races, draw frames between the game's 30 Hz ticks "
                     "(--max_fps), with the cars' controls fed input sampled each frame "
                     "(--subtick_input); game logic stays at 30 Hz");
@@ -51,7 +51,7 @@ void PaceNextPass(PPCContext& ctx, uint8_t* base) {
     render_only = pacer.WaitForNextFrame();  // false once the next tick is due
   } else {
     // Menus: the game's 30 Hz, unless
-    // --skip_intro is running the boot fast (hooks/title_screen.h).
+    // --skip_cutscenes is running the boot fast (hooks/title_screen.h).
     if (!hooks::TitleScreen_SkipTickWait()) {
       pacer.WaitForNextTick();
     }

@@ -11,7 +11,7 @@
 #include <windows.h>
 #endif
 
-REXCVAR_DEFINE_INT32(max_fps, 60, "SBX",
+REXCVAR_DEFINE_INT32(max_fps, 0, "SBX",
                      "With --subtick: frame rate cap in races; 0 means unlimited");
 
 namespace subtick {
@@ -82,7 +82,7 @@ void FramePacer::OnTickReleased() {
   if (next < now) {
     next = now + kTickPeriod;
   }
-  // Nor run ahead of it: ticks released without waiting (--skip_intro's
+  // Nor run ahead of it: ticks released without waiting (--skip_cutscenes's
   // fast boot released ~1,100 at once) would otherwise put the next one
   // that many periods away, and the game sat 36 s on the menu.
   if (next > now + kTickPeriod) {

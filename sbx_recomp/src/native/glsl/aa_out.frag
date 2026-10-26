@@ -1,16 +1,18 @@
 #version 450
-// Anti-aliasing's result back into every sample of the main view: aa_in.frag's
-// tonemap undone.
+// Anti-aliasing's result back into every sample of the view: aa_in.frag's
+// tonemap undone, at the same exposure.
 
 layout(set = 0, binding = 0) uniform sampler2D source;
 
-layout(location = 0) out vec4 color;
+layout(push_constant) uniform Constants {
+  float exposure;
+} constants;
 
-const float kExposure = 0.125;
+layout(location = 0) out vec4 color;
 
 vec3 Untonemap(vec3 t) {
   t = clamp(t, vec3(0.0), vec3(0.999));
-  return t / ((1.0 - max(max(t.r, t.g), t.b)) * kExposure);
+  return t / ((1.0 - max(max(t.r, t.g), t.b)) * constants.exposure);
 }
 
 void main() {

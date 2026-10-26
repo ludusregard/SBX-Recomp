@@ -13,7 +13,6 @@
 #include "movies/movie.h"
 #include "native/app_window.h"
 #endif
-#include "tick_rate/tick_rate.h"
 
 class SbxApp : public rex::ReXApp {
  public:
@@ -38,11 +37,6 @@ class SbxApp : public rex::ReXApp {
 #ifdef SBX_NATIVE_RENDERER
     movies::movie::SetDataRoot(game_data_root());
 #endif
-  }
-
-  // --tick_rate_half_step (src/tick_rate/tick_rate.cpp).
-  void OnPostLoadXexImage() override {
-    tick_rate::PatchStepConstants(runtime()->memory());
   }
 
 #ifdef SBX_NATIVE_RENDERER

@@ -43,7 +43,7 @@ SBX_MOVIE(820AE410, mv::Release(base, ctx.r3.u32))                // ITC 820AE52
 #undef SBX_MOVIE
 
 // Movie::RenderFrame (ITC sub_820AE958), on the render thread from command
-// 28. --skip_intro waits for it to have returned once (hooks/title_screen.cpp).
+// 28. --skip_cutscenes waits for it to have returned once (hooks/title_screen.cpp).
 extern "C" REX_FUNC(sub_820AE840) {
   REX_FUNC_PROLOGUE();
   if (REXCVAR_GET(play_movies_with_ffmpeg)) {

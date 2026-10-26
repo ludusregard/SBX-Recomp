@@ -101,7 +101,10 @@ class Passes {
   // CMAA2's edge threshold, taken when it's first used.
   void set_anti_aliasing(bool cmaa2, bool fxaa, uint32_t at, bool debug,
                          float cmaa2_threshold);
-  // Frame blending motion blur (--frame_blend; ApplyFrameBlend in
+  // --msaa: false draws every target with one sample. Taken only before the
+  // first target is made.
+  void set_msaa(bool msaa);
+  // Frame blending motion blur (--blur_frame_blend; ApplyFrameBlend in
   // passes.cpp): the main view's frames rendered over the last `shutter`
   // seconds averaged, from `inner` (the radius kept sharp: 0 the centre,
   // 1 the corners) to full at `outer`. `strength` is the blur's share (0-1;

@@ -38,6 +38,10 @@ bool LoadInstance(VkInstance instance) {
   return ok;
 }
 
+PFN_vkGetInstanceProcAddr GetInstanceProcAddr() {
+  return g_get_instance_proc_addr;
+}
+
 bool LoadDevice(VkDevice device) {
   bool ok = true;
 #define X(name) NATIVE_VK_LOAD(name, vkGetDeviceProcAddr, device)

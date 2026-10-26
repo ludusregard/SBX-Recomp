@@ -1,25 +1,43 @@
 #version 450
 // Anti-aliasing's input (--cmaa2, --fxaa; passes.cpp, ApplyCmaa2 and
-// ApplyFxaa): the main view's two samples, each tonemapped into 0..1 and
-// then averaged. The main view is HDR, stored at 8x (the resolves'
-// exponent bias -3): blended as it is, an edge against a bright pixel stays
-// as bright as that pixel, so blends (the AA's, and the 2x MSAA's own) don't
+// ApplyFxaa): the view's samples (however many it has; MULTISAMPLE, or
+// one with --msaa=false), each tonemapped into 0..1 and then averaged. The
+// race's main view is HDR stored at 8x (its resolves' exponent bias -3;
+// exposure 1/8): blended as they are, an edge against a bright pixel stays
+// as bright as that pixel, so blends (the AA's, and the MSAA's own) don't
 // show. aa_out.frag (and fxaa.frag) undo the tonemap.
 
+#ifdef MULTISAMPLE
 layout(set = 0, binding = 0) uniform sampler2DMS source;
+#else
+layout(set = 0, binding = 0) uniform sampler2D source;
+#endif
+
+layout(push_constant) uniform Constants {
+  float exposure;  // the view's values times this
+} constants;
 
 layout(location = 0) out vec4 color;
 
-const float kExposure = 0.125;
-
 vec3 Tonemap(vec3 c) {
-  c = max(c, vec3(0.0)) * kExposure;
+  c = max(c, vec3(0.0)) * constants.exposure;
   return c / (1.0 + max(max(c.r, c.g), c.b));
 }
 
 void main() {
   ivec2 position = ivec2(gl_FragCoord.xy);
-  vec4 a = texelFetch(source, position, 0);
-  vec4 b = texelFetch(source, position, 1);
-  color = vec4(0.5 * (Tonemap(a.rgb) + Tonemap(b.rgb)), 0.5 * (a.a + b.a));
+#ifdef MULTISAMPLE
+  int samples = textureSamples(source);
+  vec3 rgb = vec3(0.0);
+  float alpha = 0.0;
+  for (int i = 0; i < samples; i++) {
+    vec4 c = texelFetch(source, position, i);
+    rgb += Tonemap(c.rgb);
+    alpha += c.a;
+  }
+  color = vec4(rgb, alpha) / float(samples);
+#else
+  vec4 c = texelFetch(source, position, 0);
+  color = vec4(Tonemap(c.rgb), c.a);
+#endif
 }

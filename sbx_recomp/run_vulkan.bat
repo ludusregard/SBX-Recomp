@@ -21,4 +21,4 @@ set "REX_FULLSCREEN=false"
 set "REX_MNK_MODE=true"
 if "%REX_LOG_LEVEL%"=="" set "REX_LOG_LEVEL=info"
 
-"%exe%" %*  --subtick=true --width=3840 --height=2160 --skip_intro --motion_blur=false --cmaa2=true --aa_resolve=4 --frame_blend=1 --frame_blend_shutter=1/5
+"%exe%" %*  --width=3840 --height=2160

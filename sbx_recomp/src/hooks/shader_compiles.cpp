@@ -19,7 +19,6 @@
 // a run with --dump_shader_compiles=<dir> compiles with the real compiler
 // and writes each result to <dir>/shader_<source>_<length>_<profile>.bin;
 // then tools/compiled_shaders.py <dir> writes compiled_shaders.h.
-// --use_hardcoded_shaders=false compiles as the game did.
 
 #include "graphics/compiled_shaders.h"
 #include "guest.h"
@@ -34,10 +33,6 @@
 #include <string_view>
 #include <vector>
 
-REXCVAR_DEFINE_BOOL(use_hardcoded_shaders, true, "SBX",
-                    "Answer the game's boot shader compiles (D3DXCompileShader) with the "
-                    "shaders it made, stored in src/graphics/compiled_shaders.h, instead of "
-                    "running its HLSL compiler");
 REXCVAR_DEFINE_STRING(dump_shader_compiles, "", "SBX",
                       "Compile the game's shaders with its HLSL compiler and write each to this "
                       "directory (for tools/compiled_shaders.py), logging each compile");
@@ -128,10 +123,6 @@ extern "C" REX_FUNC(sub_822B3678) {
   std::string dir = REXCVAR_GET(dump_shader_compiles);
   if (!dir.empty()) {
     CompileAndDump(ctx, base, dir);
-    return;
-  }
-  if (!REXCVAR_GET(use_hardcoded_shaders)) {
-    __imp__sub_822B3678(ctx, base);
     return;
   }
   const auto* shader = Find(ctx.r3.u32, ctx.r4.u32, LoadString(base, ctx.r8.u32, 16));

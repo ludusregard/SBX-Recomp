@@ -5,6 +5,7 @@
 
 #include "generated_cmaa2.h"
 #include "generated_aa_in_frag.h"
+#include "generated_aa_in_ms_frag.h"
 #include "generated_aa_out_frag.h"
 #include "generated_frame_blend_frag.h"
 #include "generated_fxaa_frag.h"
@@ -46,11 +47,11 @@
 
 ITC_FLAG_DECLARE(std::string, log_level);
 
-ITC_FLAG_STRING(xbox_gamma, "off", "SBX",
+ITC_FLAG_STRING(xbox_gamma, "hdtv", "SBX",
                 "Show the frame through the display gamma table the game sets for a kind "
                 "of display, as the Xbox 360's video output does (native renderer): off "
-                "(a PC monitor, sRGB: no change), hdtv (darker mid-tones and shadows), "
-                "power (lighter shadows)");
+                "(a PC monitor, sRGB: no change), hdtv (the default: darker mid-tones and "
+                "shadows), power (lighter shadows)");
 
 namespace native {
 
@@ -132,7 +133,15 @@ VkFormat ColorFormat(uint32_t format) {
   }
 }
 
+// --msaa: false draws every target with one sample (the guest's MSAA mode
+// still lays out its EDRAM, and still tells the views apart: surface.msaa,
+// not a target's samples). Set before the first target is made.
+bool g_msaa = true;
+
 VkSampleCountFlagBits SampleCount(uint32_t msaa) {
+  if (!g_msaa) {
+    return VK_SAMPLE_COUNT_1_BIT;
+  }
   return msaa == 2 ? VK_SAMPLE_COUNT_4_BIT : msaa == 1 ? VK_SAMPLE_COUNT_2_BIT
                                                        : VK_SAMPLE_COUNT_1_BIT;
 }
@@ -1017,9 +1026,10 @@ struct Passes::State {
   uint32_t cmaa2_at = 2;
   // CMAA2's edge threshold (--cmaa2_threshold), taken when its pipelines
   // are made (the first race frame).
-  float cmaa2_threshold = 0.025f;
+  float cmaa2_threshold = 0.05f;
   uint32_t main_view_resolves = 0;  // this frame's, of the main view's color
   std::unordered_set<uint32_t> logged_main_view_resolves;
+  struct AaView;
   struct Cmaa2 {
     bool tried = false, ready = false, control_cleared = false;
     VkExtent2D extent{};
@@ -1044,9 +1054,10 @@ struct Passes::State {
     // Writing output back into every sample of the main view (the resolve
     // shader, one sample).
     VkDescriptorSet copy_set = VK_NULL_HANDLE;
-  } cmaa;
-  bool CreateCmaa2Resources(const Target& main, VkExtent2D extent);
-  void ApplyCmaa2(VkCommandBuffer commands, Target& main);
+  };
+  bool CreateCmaa2Resources(AaView& v, const Target& main, VkExtent2D extent);
+  void ApplyCmaa2(VkCommandBuffer commands, AaView& v, Target& main, VkExtent2D extent,
+                  float exposure);
   // --fxaa (glsl/fxaa.frag), at the same resolve, after CMAA2 if both are
   // on: the main view's samples tonemapped into `input` (aa_in.frag), then
   // drawn back into every sample through FXAA (which undoes the tonemap).
@@ -1064,8 +1075,8 @@ struct Passes::State {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkShaderModule pixel = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
-  } fxaa_state;
-  bool CreateFxaaResources(const Target& main, VkExtent2D extent);
+  };
+  bool CreateFxaaResources(AaView& v, const Target& main, VkExtent2D extent);
   // Both passes' input and output (glsl/aa_in.frag, aa_out.frag): the main
   // view's samples tonemapped into 0..1 and averaged into an image of
   // theirs, and the result drawn back with the tonemap undone.
@@ -1076,9 +1087,28 @@ struct Passes::State {
     VkShaderModule in_pixel = VK_NULL_HANDLE, out_pixel = VK_NULL_HANDLE;
     VkPipeline in_pipeline = VK_NULL_HANDLE;   // into one sample
     VkPipeline out_pipeline = VK_NULL_HANDLE;  // into the main view's samples
-  } aa_shared;
-  bool CreateAaShared(const Target& main);
-  // --frame_blend (glsl/frame_blend.frag), after the anti-aliasing at the
+  };
+  // One view's anti-aliasing (its own resources: sizes and sample counts
+  // differ). The race's main view (pitch 1040, 2x MSAA, HDR at 8x), at its
+  // cmaa2_at-th color resolve; and the garage's, also the menus' car views
+  // (pitch 1280, 4x MSAA, drawn in tiles, unscaled), before its first tile
+  // is resolved (TiledResolve).
+  struct AaView {
+    const char* name = "";
+    Cmaa2 cmaa;
+    Fxaa fxaa;
+    AaShared shared;
+  };
+  AaView race_aa{"main view"};
+  // The tiled views', by target (targets are never freed; each has its own
+  // set naming its samples).
+  std::map<const Target*, AaView> tiled_aa;
+  bool CreateAaShared(AaView& v, const Target& main);
+  // CMAA2 and then FXAA (as they're on) on `main`'s top-left `extent`, its
+  // values times `exposure` tonemapped into 0..1 for them.
+  void ApplyAntiAliasing(VkCommandBuffer commands, AaView& v, Target& main, VkExtent2D extent,
+                         float exposure);
+  // --blur_frame_blend (glsl/frame_blend.frag), after the anti-aliasing at the
   // same resolve: each rendered frame of the main view is kept in a ring, and
   // the frames rendered within the last shutter are averaged and drawn back
   // into the main view, away from the centre. The shutter is a time, so it
@@ -1106,14 +1136,15 @@ struct Passes::State {
   void ApplyFrameBlend(VkCommandBuffer commands, Target& main);
   // Draws the main view's tonemapped average into `image` (left in
   // SHADER_READ_ONLY_OPTIMAL).
-  void DrawAaInput(VkCommandBuffer commands, Target& main, Image& image, VkImageLayout& layout,
-                   VkExtent2D extent);
+  void DrawAaInput(VkCommandBuffer commands, AaView& v, Target& main, Image& image,
+                   VkImageLayout& layout, VkExtent2D extent, float exposure);
   // A full-screen draw into every sample of the main view with `pipeline`
   // and `set` (resolve_layout's), push constants `push` (or none).
   void DrawIntoMainView(VkCommandBuffer commands, Target& main, VkExtent2D extent,
                         VkPipeline pipeline, VkDescriptorSet set, const void* push,
                         uint32_t push_size);
-  void ApplyFxaa(VkCommandBuffer commands, Target& main);
+  void ApplyFxaa(VkCommandBuffer commands, AaView& v, Target& main, VkExtent2D extent,
+                 float exposure);
   struct Resolved {
     VkImage image;
     VkExtent2D extent;
@@ -2847,14 +2878,14 @@ void Passes::State::ApplyGamma(VkCommandBuffer commands) {
 // resolve after it then copies. Made on first use, at the main view's size.
 // Blending the HDR values as they are left the blends invisible (the
 // user's test, 2026-10-25): an edge against a bright pixel stays bright.
-bool Passes::State::CreateCmaa2Resources(const Target& main, VkExtent2D extent) {
+bool Passes::State::CreateCmaa2Resources(AaView& v, const Target& main, VkExtent2D extent) {
   VkDevice device = context.device;
-  Cmaa2& c = cmaa;
+  Cmaa2& c = v.cmaa;
   c.extent = extent;
   const uint32_t w = extent.width, h = extent.height;
   constexpr VkImageUsageFlags kTransfer =
       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  if (!CreateAaShared(main) ||
+  if (!CreateAaShared(v, main) ||
       !CreateImage(c.input, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, main.format, {w, h, 1}, 1,
                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | kTransfer,
                    VK_IMAGE_ASPECT_COLOR_BIT, 0,
@@ -3019,19 +3050,20 @@ bool Passes::State::CreateCmaa2Resources(const Target& main, VkExtent2D extent) 
   return true;
 }
 
-void Passes::State::ApplyCmaa2(VkCommandBuffer commands, Target& main) {
-  Cmaa2& c = cmaa;
-  const VkExtent2D extent{std::min(main_view_extent.width, main.extent.width),
-                          std::min(main_view_extent.height, main.extent.height)};
+void Passes::State::ApplyCmaa2(VkCommandBuffer commands, AaView& v, Target& main,
+                               VkExtent2D extent, float exposure) {
+  Cmaa2& c = v.cmaa;
   if (!c.tried) {
     c.tried = true;
-    c.ready = CreateCmaa2Resources(main, extent);
+    c.ready = CreateCmaa2Resources(v, main, extent);
     if (c.ready) {
-      ITC_LOG_INFO("native renderer: cmaa2: the main view ({}x{}) is anti-aliased before its "
-                   "color resolve {} of a frame, edge threshold {}",
-                   extent.width, extent.height, cmaa2_at, cmaa2_threshold);
+      ITC_LOG_INFO("native renderer: cmaa2: the {} ({}x{}, {} samples) is anti-aliased before "
+                   "it's resolved, edge threshold {}, exposure {}",
+                   v.name, extent.width, extent.height, int(main.samples), cmaa2_threshold,
+                   exposure);
     } else {
-      ITC_LOG_ERROR("native renderer: cmaa2: couldn't create its resources; off");
+      ITC_LOG_ERROR("native renderer: cmaa2: couldn't create the {}'s resources; off there",
+                    v.name);
     }
   }
   if (!c.ready || extent.width != c.extent.width || extent.height != c.extent.height) {
@@ -3041,7 +3073,7 @@ void Passes::State::ApplyCmaa2(VkCommandBuffer commands, Target& main) {
   EndRendering(commands);
 
   // The main view's samples into input (tonemapped); input copied to output.
-  DrawAaInput(commands, main, c.input, c.input_layout, extent);
+  DrawAaInput(commands, v, main, c.input, c.input_layout, extent, exposure);
   Transition(commands, c.input.image, VK_IMAGE_ASPECT_COLOR_BIT, c.input_layout,
              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   Transition(commands, c.output.image, VK_IMAGE_ASPECT_COLOR_BIT, c.output_layout,
@@ -3108,14 +3140,15 @@ void Passes::State::ApplyCmaa2(VkCommandBuffer commands, Target& main) {
   // (Transition's barriers wait for all commands).
   Transition(commands, c.output.image, VK_IMAGE_ASPECT_COLOR_BIT, c.output_layout,
              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  DrawIntoMainView(commands, main, extent, aa_shared.out_pipeline, c.copy_set, nullptr, 0);
+  DrawIntoMainView(commands, main, extent, v.shared.out_pipeline, c.copy_set, &exposure,
+                   sizeof(exposure));
 }
 
-bool Passes::State::CreateFxaaResources(const Target& main, VkExtent2D extent) {
+bool Passes::State::CreateFxaaResources(AaView& v, const Target& main, VkExtent2D extent) {
   VkDevice device = context.device;
-  Fxaa& f = fxaa_state;
+  Fxaa& f = v.fxaa;
   f.extent = extent;
-  if (!CreateAaShared(main) ||
+  if (!CreateAaShared(v, main) ||
       !CreateImage(f.input, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, main.format,
                    {extent.width, extent.height, 1}, 1,
                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -3164,35 +3197,47 @@ bool Passes::State::CreateFxaaResources(const Target& main, VkExtent2D extent) {
   return f.pipeline != VK_NULL_HANDLE;
 }
 
-void Passes::State::ApplyFxaa(VkCommandBuffer commands, Target& main) {
-  Fxaa& f = fxaa_state;
-  const VkExtent2D extent{std::min(main_view_extent.width, main.extent.width),
-                          std::min(main_view_extent.height, main.extent.height)};
+void Passes::State::ApplyFxaa(VkCommandBuffer commands, AaView& v, Target& main,
+                              VkExtent2D extent, float exposure) {
+  Fxaa& f = v.fxaa;
   if (!f.tried) {
     f.tried = true;
-    f.ready = CreateFxaaResources(main, extent);
+    f.ready = CreateFxaaResources(v, main, extent);
     if (f.ready) {
-      ITC_LOG_INFO("native renderer: fxaa: the main view ({}x{}) is anti-aliased before its "
-                   "color resolve {} of a frame",
-                   extent.width, extent.height, cmaa2_at);
+      ITC_LOG_INFO("native renderer: fxaa: the {} ({}x{}, {} samples) is anti-aliased before "
+                   "it's resolved, exposure {}",
+                   v.name, extent.width, extent.height, int(main.samples), exposure);
     } else {
-      ITC_LOG_ERROR("native renderer: fxaa: couldn't create its resources; off");
+      ITC_LOG_ERROR("native renderer: fxaa: couldn't create the {}'s resources; off there",
+                    v.name);
     }
   }
   if (!f.ready || extent.width != f.extent.width || extent.height != f.extent.height) {
     return;
   }
   EndRendering(commands);
-  DrawAaInput(commands, main, f.input, f.input_layout, extent);
+  DrawAaInput(commands, v, main, f.input, f.input_layout, extent, exposure);
   struct {
     float texel[2];
     int32_t debug;
-  } constants{{1.0f / float(extent.width), 1.0f / float(extent.height)}, aa_debug ? 1 : 0};
+    float exposure;
+  } constants{{1.0f / float(extent.width), 1.0f / float(extent.height)}, aa_debug ? 1 : 0,
+              exposure};
   DrawIntoMainView(commands, main, extent, f.pipeline, f.set, &constants, sizeof(constants));
 }
 
-bool Passes::State::CreateAaShared(const Target& main) {
-  AaShared& a = aa_shared;
+void Passes::State::ApplyAntiAliasing(VkCommandBuffer commands, AaView& v, Target& main,
+                                      VkExtent2D extent, float exposure) {
+  if (cmaa2) {
+    ApplyCmaa2(commands, v, main, extent, exposure);
+  }
+  if (fxaa) {
+    ApplyFxaa(commands, v, main, extent, exposure);
+  }
+}
+
+bool Passes::State::CreateAaShared(AaView& v, const Target& main) {
+  AaShared& a = v.shared;
   if (a.tried) {
     return a.ready;
   }
@@ -3228,7 +3273,10 @@ bool Passes::State::CreateAaShared(const Target& main) {
     info.pCode = code;
     return vk::vkCreateShaderModule(device, &info, nullptr, &out) == VK_SUCCESS;
   };
-  if (!module(k_aa_in_frag, sizeof(k_aa_in_frag), a.in_pixel) ||
+  // The input reads the view's samples, or its one sample (--msaa=false).
+  const bool multisample = main.samples != VK_SAMPLE_COUNT_1_BIT;
+  if (!(multisample ? module(k_aa_in_ms_frag, sizeof(k_aa_in_ms_frag), a.in_pixel)
+                    : module(k_aa_in_frag, sizeof(k_aa_in_frag), a.in_pixel)) ||
       !module(k_aa_out_frag, sizeof(k_aa_out_frag), a.out_pixel)) {
     return false;
   }
@@ -3239,8 +3287,8 @@ bool Passes::State::CreateAaShared(const Target& main) {
   return a.ready;
 }
 
-void Passes::State::DrawAaInput(VkCommandBuffer commands, Target& main, Image& image,
-                                VkImageLayout& layout, VkExtent2D extent) {
+void Passes::State::DrawAaInput(VkCommandBuffer commands, AaView& v, Target& main, Image& image,
+                                VkImageLayout& layout, VkExtent2D extent, float exposure) {
   EndRendering(commands);
   Transition(commands, main.image.image, VK_IMAGE_ASPECT_COLOR_BIT, main.layout,
              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -3261,9 +3309,11 @@ void Passes::State::DrawAaInput(VkCommandBuffer commands, Target& main, Image& i
   VkViewport viewport{0.0f, 0.0f, float(extent.width), float(extent.height), 0.0f, 1.0f};
   vk::vkCmdSetViewport(commands, 0, 1, &viewport);
   vk::vkCmdSetScissor(commands, 0, 1, &area);
-  vk::vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, aa_shared.in_pipeline);
+  vk::vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, v.shared.in_pipeline);
   vk::vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, resolve_layout, 0, 1,
-                              &aa_shared.main_set, 0, nullptr);
+                              &v.shared.main_set, 0, nullptr);
+  vk::vkCmdPushConstants(commands, resolve_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(exposure), &exposure);
   vk::vkCmdDraw(commands, 3, 1, 0, 0);
   vk::vkCmdEndRendering(commands);
   recorded.valid = false;
@@ -3355,12 +3405,12 @@ void Passes::State::ApplyFrameBlend(VkCommandBuffer commands, Target& main) {
     b.tried = true;
     b.ready = CreateFrameBlendResources(main, extent);
     if (b.ready) {
-      ITC_LOG_INFO("native renderer: frame_blend: the main view ({}x{}) blended over a {} s "
+      ITC_LOG_INFO("native renderer: blur_frame_blend: the main view ({}x{}) blended over a {} s "
                    "shutter (up to {} frames), away from the centre, before its color resolve {} "
                    "of a frame",
                    extent.width, extent.height, b.shutter, FrameBlend::kSamples, cmaa2_at);
     } else {
-      ITC_LOG_ERROR("native renderer: frame_blend: couldn't create its resources; off");
+      ITC_LOG_ERROR("native renderer: blur_frame_blend: couldn't create its resources; off");
     }
   }
   if (!b.ready || extent.width != b.extent.width || extent.height != b.extent.height) {
@@ -3396,12 +3446,21 @@ void Passes::State::ApplyFrameBlend(VkCommandBuffer commands, Target& main) {
              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   Transition(commands, b.ring.image, VK_IMAGE_ASPECT_COLOR_BIT, b.ring_layout,
              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  VkImageResolve resolve{};
-  resolve.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-  resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, current, 1};
-  resolve.extent = {extent.width, extent.height, 1};
-  vk::vkCmdResolveImage(commands, main.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        b.ring.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+  if (main.samples == VK_SAMPLE_COUNT_1_BIT) {  // --msaa=false: a copy
+    VkImageCopy copy{};
+    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, current, 1};
+    copy.extent = {extent.width, extent.height, 1};
+    vk::vkCmdCopyImage(commands, main.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       b.ring.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+  } else {
+    VkImageResolve resolve{};
+    resolve.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, current, 1};
+    resolve.extent = {extent.width, extent.height, 1};
+    vk::vkCmdResolveImage(commands, main.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          b.ring.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+  }
   Transition(commands, b.ring.image, VK_IMAGE_ASPECT_COLOR_BIT, b.ring_layout,
              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   struct {
@@ -4232,8 +4291,7 @@ void Passes::State::Draw(VkCommandBuffer commands, uint8_t* base, uint32_t devic
     s.stats.failed_by[2]++;
     return;
   }
-  bool main_view_draw = color && color->surface.pitch == kMainViewPitch &&
-                        color->samples == VK_SAMPLE_COUNT_2_BIT;
+  bool main_view_draw = color && State::IsMainViewSurface(color->surface);
   if (pixel) {
     if (main_view_draw && std::find(frame_pixel_shaders.begin(), frame_pixel_shaders.end(),
                                     pixel->hash) == frame_pixel_shaders.end()) {
@@ -4700,7 +4758,7 @@ void Passes::State::Draw(VkCommandBuffer commands, uint8_t* base, uint32_t devic
 
   // Draw.
   s.BeginRendering(commands, color, depth);
-  if (color && color->surface.pitch == kMainViewPitch && color->samples == VK_SAMPLE_COUNT_2_BIT &&
+  if (color && State::IsMainViewSurface(color->surface) &&
       color->format == VK_FORMAT_R16G16B16A16_SFLOAT) {
     s.main_view = color;
   }
@@ -5185,7 +5243,7 @@ void Passes::State::Resolve(VkCommandBuffer commands, uint8_t* base, uint32_t de
   uint32_t source_object = from_depth ? depth_object : color_object;
   Target* source = source_object ? GetTarget(commands, base, source_object, from_depth) : nullptr;
   if (source && !from_depth && IsMainViewSurface(source->surface) &&
-      source->samples == VK_SAMPLE_COUNT_2_BIT && source->format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+      source->format == VK_FORMAT_R16G16B16A16_SFLOAT) {
     // The main view's color: in a race, its first resolve is the opaque
     // scene (read by the transparent draws after it), its second the whole
     // scene, read by the post-processing (ITC's docs/gpu-functions.md, "A
@@ -5193,12 +5251,10 @@ void Passes::State::Resolve(VkCommandBuffer commands, uint8_t* base, uint32_t de
     // bloom, the motion blur and the combine all read the anti-aliased
     // scene.
     if (++main_view_resolves == cmaa2_at) {
-      if (cmaa2) {
-        ApplyCmaa2(commands, *source);
-      }
-      if (fxaa) {
-        ApplyFxaa(commands, *source);
-      }
+      // Its drawn part; HDR stored at 8x (the resolves' exponent bias -3).
+      const VkExtent2D extent{std::min(main_view_extent.width, source->extent.width),
+                              std::min(main_view_extent.height, source->extent.height)};
+      ApplyAntiAliasing(commands, race_aa, *source, extent, 0.125f);
       if (frame_blend.strength > 0) {
         ApplyFrameBlend(commands, *source);
       }
@@ -5304,6 +5360,23 @@ void Passes::TiledResolve(VkCommandBuffer commands, uint8_t* base, uint32_t devi
                  rect_address ? rect[2] : -1, rect_address ? rect[3] : -1, destination,
                  point_address ? point[0] : -1, point_address ? point[1] : -1);
   }
+  // The garage's view (and the menus' car views: pitch 1280, 4x MSAA, 7e3),
+  // drawn whole here: anti-aliased once, before its first tile is resolved.
+  // Its values are as the resolve's exponent bias leaves them (0 there:
+  // unscaled), so they're tonemapped at that exposure.
+  if (tile == 0 && !(flags & 4) && (s.cmaa2 || s.fxaa)) {
+    uint32_t object = guest::LoadU32(base, device + kDeviceRenderTarget0 + 4 * (flags & 3));
+    Target* source = object ? s.GetTarget(commands, base, object, false) : nullptr;
+    if (source && source->surface.msaa == 2 &&  // the guest's 4x, whatever --msaa draws
+        source->format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+      auto [it, added] = s.tiled_aa.try_emplace(source);
+      if (added) {
+        it->second.name = "garage view";
+      }
+      s.ApplyAntiAliasing(commands, it->second, *source, source->extent,
+                          std::ldexp(1.0f, int32_t(flags) >> 26));
+    }
+  }
   // The library clears the target after each tile but the last for the
   // next tile; the whole surface is drawn at once here, so only the last
   // tile's clears are made.
@@ -5398,6 +5471,15 @@ void Passes::set_log_glow(bool log) {
 
 void Passes::set_skip_pixel_shader(uint64_t hash) {
   state_->skip_pixel_shader = hash;
+}
+
+void Passes::set_msaa(bool msaa) {
+  if (msaa == g_msaa || !state_->targets.empty()) {
+    return;  // fixed once the first target is made
+  }
+  g_msaa = msaa;
+  ITC_LOG_INFO("native renderer: msaa {}: targets drawn with {}", msaa ? "on" : "off",
+               msaa ? "the game's MSAA" : "one sample each");
 }
 
 void Passes::set_skip_motion_blur(bool skip) {
@@ -5943,12 +6025,22 @@ VkExtent2D Passes::EndFrame(VkCommandBuffer commands, int32_t show_resolve, bool
                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     extent = {std::min(s.main_view_extent.width, main->extent.width),
               std::min(s.main_view_extent.height, main->extent.height)};
-    VkImageResolve region{};
-    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.dstSubresource = region.srcSubresource;
-    region.extent = {extent.width, extent.height, 1};
-    vk::vkCmdResolveImage(commands, main->image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shown,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    if (main->samples == VK_SAMPLE_COUNT_1_BIT) {  // --msaa=false
+      VkImageBlit blit{};
+      blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      blit.srcOffsets[1] = {int32_t(extent.width), int32_t(extent.height), 1};
+      blit.dstSubresource = blit.srcSubresource;
+      blit.dstOffsets[1] = blit.srcOffsets[1];
+      vk::vkCmdBlitImage(commands, main->image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shown,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+    } else {
+      VkImageResolve region{};
+      region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      region.dstSubresource = region.srcSubresource;
+      region.extent = {extent.width, extent.height, 1};
+      vk::vkCmdResolveImage(commands, main->image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            shown, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
   } else {
     // No main view this frame (menus): dark blue.
     VkClearColorValue color{{0.0f, 0.05f, 0.15f, 1.0f}};

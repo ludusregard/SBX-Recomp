@@ -1,5 +1,5 @@
 #version 450
-// Frame blending motion blur (--frame_blend; passes.cpp, ApplyFrameBlend):
+// Frame blending motion blur (--blur_frame_blend; passes.cpp, ApplyFrameBlend):
 // a camera shutter approximated by averaging the rendered frames of the 3D
 // view from the last shutter (the game's 30 Hz tick, 1/30 s), as bxt.rs's
 // Half-Life recorder blends sub-frames but sliding, one output per rendered

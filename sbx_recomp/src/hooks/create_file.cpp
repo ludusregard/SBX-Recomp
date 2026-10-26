@@ -3,7 +3,7 @@
 //
 // --log_file_opens logs every file the game opens through it. (ITC: failing
 // the boot logo movie's open to skip it doesn't work, the game shows the
-// dirty disc error; --skip_intro does it instead.)
+// dirty disc error; --skip_cutscenes does it instead.)
 
 #include "guest.h"
 

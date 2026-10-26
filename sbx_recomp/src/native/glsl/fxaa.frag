@@ -10,6 +10,7 @@ layout(set = 0, binding = 0) uniform sampler2D source;  // linear, clamped
 layout(push_constant) uniform Constants {
   vec2 texel;  // 1 / the source's size
   int debug;   // --aa_debug: the pixels FXAA blends drawn red
+  float exposure;  // as aa_in.frag's: the view's values times this tonemapped
 } constants;
 
 layout(location = 0) out vec4 color;
@@ -23,14 +24,12 @@ const int kSteps = 12;
 const float kStepSizes[kSteps] = float[](1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 4.0,
                                          8.0);
 
-const float kExposure = 0.125;  // as aa_in.frag's
-
 // Luma of the tonemapped colour, roughly gamma-compressed (as FXAA's).
 float Luma(vec3 rgb) { return sqrt(dot(rgb, vec3(0.299, 0.587, 0.114))); }
 
 vec3 Untonemap(vec3 t) {
   t = clamp(t, vec3(0.0), vec3(0.999));
-  return t / ((1.0 - max(max(t.r, t.g), t.b)) * kExposure);
+  return t / ((1.0 - max(max(t.r, t.g), t.b)) * constants.exposure);
 }
 
 float LumaAt(vec2 uv) { return Luma(texture(source, uv).rgb); }
@@ -123,6 +122,6 @@ void main() {
   }
   color = vec4(Untonemap(texture(source, final_uv).rgb), center.a);
   if (constants.debug != 0) {
-    color = vec4(8.0, 0.0, 0.0, center.a);  // red (the main view is stored at 8x)
+    color = vec4(1.0 / constants.exposure, 0.0, 0.0, center.a);  // red, at the view's scale
   }
 }
