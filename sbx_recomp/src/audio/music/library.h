@@ -1,5 +1,6 @@
 // The custom music folders: CUSTOM_MUSIC/<CATEGORY>/ with audio files and an
-// optional metadata.xml (docs/custom_music.md). Scanned once at start-up,
+// optional metadata.xml (docs/custom_music.md), which can also weigh the
+// game's own songs (<Game>; weight 0 blocks one). Scanned once at start-up,
 // read-only after. Which category the game is playing music for is decided
 // by the caller (src/hooks/custom_music.cpp); this only holds the files and
 // picks one.
@@ -14,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "audio/music/metadata.h"
+
 namespace audio::music {
 
 struct Choice {
@@ -23,16 +26,25 @@ struct Choice {
   double loop_in = 0, loop_out = 0;
 };
 
+// Who plays in the place of a blocked game song: one of the folder's tracks,
+// or another game song (its bank's name).
+struct Substitute {
+  std::optional<Choice> custom;
+  std::string game;
+};
+
 class Library {
  public:
   enum class Level { kInfo, kWarning, kError };
   using Log = std::function<void(Level, const std::string&)>;
+  // Whether game song `name` can play in `category` (a <Game> entry's Name).
+  using ValidGame = std::function<bool(const std::string& category, const std::string& name)>;
 
   // Scans `root` (the CUSTOM_MUSIC folder) for the folders named in
   // `categories` (matched ignoring case). Missing folders are fine; other
   // folders are reported. Each file is opened once to check it (Track::Probe).
   void Scan(const std::filesystem::path& root, const std::vector<std::string>& categories,
-            const Log& log);
+            const Log& log, const ValidGame& valid_game);
 
   // The chance a track start in `category` plays a custom track: the
   // folder's ReplaceChance, else `fallback`; 0 when it has nothing to pick.
@@ -47,6 +59,14 @@ class Library {
   // Tracks that can be picked (weight above 0).
   size_t Count(const std::string& category) const;
 
+  // The weight of game song `name` in `category`: its <Game> entry's, else 1.
+  double GameWeight(const std::string& category, const std::string& name) const;
+
+  // For a blocked game song (`blocked`): another song of the folder by
+  // weight, from its tracks and the game songs it lists; nullopt if none.
+  std::optional<Substitute> PickSubstitute(const std::string& category, const std::string& blocked,
+                                           std::mt19937& rng) const;
+
  private:
   struct Entry {
     Choice choice;
@@ -56,6 +76,7 @@ class Library {
     std::string category;
     std::optional<double> replace_chance;
     std::vector<Entry> entries;
+    std::vector<GameEntry> game;
   };
   const Folder* Find(const std::string& category) const;
 

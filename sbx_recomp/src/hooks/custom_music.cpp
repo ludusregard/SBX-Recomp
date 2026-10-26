@@ -44,6 +44,14 @@
 // sound starting again (the same XMA input) reopens the same track; any other
 // stereo sound plays the game's.
 //
+// A folder's metadata.xml can also weigh the game's own songs (<Game Name=
+// "bgm_tmp_05" Weight="0"/>). The game's pick still plays unless its weight
+// is 0 (blocked); then another song of the folder plays, by weight: one of
+// its tracks, or a game song it lists, loaded in its place (Bgm::Load handed
+// another name from its own list). In a menu folder only the folder's own
+// song can be listed (the four share one bank), so a blocked menu song can
+// only give way to the folder's tracks.
+//
 // When a custom track ends and the game's sound would loop, another track of
 // the folder plays next (--custom_music_shuffle, the default) or, with
 // --custom_music_shuffle=false, the track loops. The next track is picked by
@@ -93,6 +101,8 @@ namespace {
 // The "category" of the Bgm::Load call that loads BGM_SYSTEM: not a category
 // itself (see MenuSong).
 constexpr const char* kMenuBank = "MENU";
+// Bgm::Load's list of bank names (BGM_SYSTEM and bgm_tmp_01-17).
+constexpr uint32_t kBankNames = 0x820069B0;
 
 struct CallSite {
   uint32_t return_address;
@@ -224,11 +234,42 @@ std::unique_ptr<audio::music::Track> Open(const audio::music::Choice& choice) {
   return track;
 }
 
-// At each Bgm::Load: the roll, and the track opened if it hits. The open is
-// under the lock on purpose: a music sound starting meanwhile (TakeTrack, on
-// the audio thread) waits the few milliseconds for it rather than playing the
-// game's track after a hit.
-void Choose(uint32_t from, const std::string& bank) {
+// The guest address of game song `name` in Bgm::Load's own list of names
+// (0x820069B0: 18 strings, 12 bytes apart), or 0.
+uint32_t BankNameAddress(uint8_t* base, const std::string& name) {
+  for (uint32_t i = 0; i < 18; i++) {
+    const uint32_t address = kBankNames + i * 12;
+    if (audio::music::SameName(GuestString(base, address, 12), name)) {
+      return address;
+    }
+  }
+  return 0;
+}
+
+// Whether game song `name` can be listed (<Game>) in `category`: in a menu
+// folder only BGM_SYSTEM (that folder's own song), elsewhere bgm_tmp_01 to 17
+// (a bank Bgm::Load can be handed in its place).
+bool ValidGame(const std::string& category, const std::string& name) {
+  if (category.starts_with("MENU_")) {
+    return audio::music::SameName(name, "BGM_SYSTEM");
+  }
+  for (int i = 1; i <= 17; i++) {
+    char bank[16];
+    std::snprintf(bank, sizeof(bank), "bgm_tmp_%02d", i);
+    if (audio::music::SameName(name, bank)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// At each Bgm::Load: the roll, and the track opened if it hits; on a miss, a
+// blocked game song (weight 0) is swapped for another of the folder. Returns
+// the guest address of another bank's name to load instead, or 0. The open
+// is under the lock on purpose: a music sound starting meanwhile (TakeTrack,
+// on the audio thread) waits the few milliseconds for it rather than playing
+// the game's track after a hit.
+uint32_t Choose(uint8_t* base, uint32_t from, const std::string& bank) {
   std::lock_guard lock(g_mutex);
   g_current.reset();
   g_pending.reset();
@@ -238,39 +279,65 @@ void Choose(uint32_t from, const std::string& bank) {
   const char* category = CategoryOf(from);
   if (!category) {
     REXLOG_INFO("custom_music: {} (from {:08X}): not a category; the game's", bank, from);
-    return;
+    return 0;
   }
   if (!REXCVAR_GET(custom_music)) {
     REXLOG_INFO("custom_music: {} (from {:08X}, {}): off; the game's", bank, from, category);
-    return;
+    return 0;
   }
   if (std::strcmp(category, kMenuBank) == 0) {
     g_menu_bank = true;
     REXLOG_INFO("custom_music: {} (from {:08X}): the menu bank; each of its songs rolls as it "
                 "starts",
                 bank, from);
-    return;
+    return 0;
   }
   const double chance = g_library.Chance(category, REXCVAR_GET(new_music_roll));
   const double roll = std::uniform_real_distribution<double>(0.0, 1.0)(g_random);
-  if (chance <= 0 || roll >= chance) {
-    REXLOG_INFO("custom_music: {} (from {:08X}, {}): the game's{}", bank, from, category,
-                chance > 0 ? " (rolled " + Fixed2(roll) + ", chance " + Fixed2(chance) + ")"
-                           : std::string(" (nothing to pick, or no chance set)"));
-    return;
+  std::string rolled =
+      chance > 0 ? "rolled " + Fixed2(roll) + ", chance " + Fixed2(chance)
+                 : std::string("nothing to pick, or no chance set");
+  std::optional<audio::music::Choice> choice;
+  if (chance > 0 && roll < chance) {
+    choice = g_library.Pick(category, g_random);
+  } else if (g_library.GameWeight(category, bank) > 0) {
+    REXLOG_INFO("custom_music: {} (from {:08X}, {}): the game's ({})", bank, from, category,
+                rolled);
+    return 0;
+  } else {
+    // The game's pick is blocked: another song of the folder.
+    auto other = g_library.PickSubstitute(category, bank, g_random);
+    if (!other) {
+      REXLOG_INFO("custom_music: {} (from {:08X}, {}): blocked, but nothing else can play; "
+                  "it plays",
+                  bank, from, category);
+      return 0;
+    }
+    if (!other->custom) {
+      const uint32_t address = BankNameAddress(base, other->game);
+      if (!address) {
+        REXLOG_ERROR("custom_music: {} isn't in Bgm::Load's list; {} plays", other->game, bank);
+        return 0;
+      }
+      REXLOG_INFO("custom_music: {} (from {:08X}, {}): blocked; the game's {} instead", bank,
+                  from, category, other->game);
+      return address;
+    }
+    choice = std::move(other->custom);
+    rolled = "blocked";
   }
-  auto choice = g_library.Pick(category, g_random);
   if (!choice) {
-    return;
+    return 0;
   }
   g_pending = Open(*choice);
   if (!g_pending) {
-    return;
+    return 0;
   }
-  REXLOG_INFO("custom_music: {} (from {:08X}, {}): {} instead (rolled {}, chance {})", bank,
-              from, category, choice->name, Fixed2(roll), Fixed2(chance));
+  REXLOG_INFO("custom_music: {} (from {:08X}, {}): {} instead ({})", bank, from, category,
+              choice->name, rolled);
   g_current = std::move(choice);
   g_category = category;
+  return 0;
 }
 
 // A BGM_SYSTEM song starting (the lock is held): the roll and pick for its
@@ -293,13 +360,27 @@ std::unique_ptr<audio::music::Track> RollMenuSong(uint32_t input, const uint8_t*
   const char* category = kMenuSongs[song].category;
   const double chance = g_library.Chance(category, REXCVAR_GET(new_music_roll));
   const double roll = std::uniform_real_distribution<double>(0.0, 1.0)(g_random);
-  if (chance <= 0 || roll >= chance) {
-    REXLOG_INFO("custom_music: menu song {} ({}): the game's{}", song, category,
-                chance > 0 ? " (rolled " + Fixed2(roll) + ", chance " + Fixed2(chance) + ")"
-                           : std::string(" (nothing to pick, or no chance set)"));
+  std::string rolled =
+      chance > 0 ? "rolled " + Fixed2(roll) + ", chance " + Fixed2(chance)
+                 : std::string("nothing to pick, or no chance set");
+  std::optional<audio::music::Choice> choice;
+  if (chance > 0 && roll < chance) {
+    choice = g_library.Pick(category, g_random);
+  } else if (g_library.GameWeight(category, "BGM_SYSTEM") > 0) {
+    REXLOG_INFO("custom_music: menu song {} ({}): the game's ({})", song, category, rolled);
     return nullptr;
+  } else {
+    // Blocked: one of the folder's tracks (no other game song can play here).
+    auto other = g_library.PickSubstitute(category, "BGM_SYSTEM", g_random);
+    if (!other || !other->custom) {
+      REXLOG_INFO("custom_music: menu song {} ({}): blocked, but the folder has no tracks; it "
+                  "plays",
+                  song, category);
+      return nullptr;
+    }
+    choice = std::move(other->custom);
+    rolled = "blocked";
   }
-  auto choice = g_library.Pick(category, g_random);
   if (!choice) {
     return nullptr;
   }
@@ -307,8 +388,8 @@ std::unique_ptr<audio::music::Track> RollMenuSong(uint32_t input, const uint8_t*
   if (!track) {
     return nullptr;
   }
-  REXLOG_INFO("custom_music: menu song {} ({}): {} instead (rolled {}, chance {})", song,
-              category, choice->name, Fixed2(roll), Fixed2(chance));
+  REXLOG_INFO("custom_music: menu song {} ({}): {} instead ({})", song, category, choice->name,
+              rolled);
   g_current = std::move(choice);
   g_category = category;
   g_input = input;
@@ -338,7 +419,8 @@ void SetGameDataRoot(const std::filesystem::path& root) {
                        REXLOG_ERROR("custom_music: {}", message);
                        break;
                    }
-                 });
+                 },
+                 ValidGame);
 }
 
 std::unique_ptr<audio::music::Track> TakeTrack(uint32_t input, const uint8_t* data, uint32_t size,
@@ -434,9 +516,13 @@ bool Logging() {
 
 }  // namespace custom_music
 
-// Bgm::Load (r4 the bank's name): the roll, then the game's own load.
+// Bgm::Load (r4 the bank's name): the roll, then the game's own load, of
+// another bank when the game's pick is blocked.
 extern "C" REX_FUNC(sub_82106540) {
   REX_FUNC_PROLOGUE();
-  Choose(uint32_t(ctx.lr), GuestString(base, ctx.r4.u32, 32));
+  const uint32_t other = Choose(base, uint32_t(ctx.lr), GuestString(base, ctx.r4.u32, 32));
+  if (other) {
+    ctx.r4.u64 = other;
+  }
   __imp__sub_82106540(ctx, base);
 }

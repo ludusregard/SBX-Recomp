@@ -293,6 +293,30 @@ std::optional<Metadata> ParseMetadata(std::string_view text, std::string* error,
   }
   for (size_t i = 1; i < elements.size(); i++) {
     const Element& e = elements[i];
+    if (e.depth == 1 && SameName(e.name, "Game")) {
+      GameEntry g;
+      g.line = e.line;
+      for (const Attribute& a : e.attributes) {
+        if (SameName(a.name, "Name")) {
+          g.name = a.value;
+        } else if (SameName(a.name, "Weight")) {
+          auto v = Number(a.value);
+          if (!v || *v < 0) {
+            *error = At(e.line) + "Weight must be a number of 0 or more, not \"" + a.value + "\"";
+            return std::nullopt;
+          }
+          g.weight = *v;
+        } else {
+          warnings->push_back(At(e.line) + "<Game> has no attribute " + a.name + "; ignored");
+        }
+      }
+      if (g.name.empty()) {
+        warnings->push_back(At(e.line) + "a <Game> without a Name; skipped");
+      } else {
+        m.game.push_back(std::move(g));
+      }
+      continue;
+    }
     if (e.depth != 1 || !SameName(e.name, "Track")) {
       warnings->push_back(At(e.line) + "<" + e.name + "> isn't used; ignored");
       continue;

@@ -7,10 +7,12 @@ and shuffle.
 The user-facing guide is
 `assets/ADDON_DATA/CUSTOM_MUSIC/CUSTOM_MUSIC_README.md`; keep it in step
 with this doc. The category folders are in the repo, each with a
-`.gitignore` that keeps the folder and leaves the user's music and
-`metadata.xml` out of git (the scan skips hidden files and folders).
-`generate_metadata.py` there writes a starting `metadata.xml` for each
-folder with music.
+`metadata.xml` listing the game's own songs for it at weight 1 (which
+changes nothing until edited). The repo's `.gitignore` keeps the music
+people add out of git but not the `metadata.xml` files. `generate_metadata.py`
+there makes those files (`--force` remakes them as shipped) and adds any
+music file a folder's `metadata.xml` doesn't list yet. The scan skips hidden
+files and folders.
 
 ## Using it
 
@@ -87,6 +89,8 @@ replaced.
 
 ```xml
 <Music Category="ROAMING" ReplaceChance="0.5">
+  <Game Name="bgm_tmp_06" Weight="1"/>
+  <Game Name="bgm_tmp_05" Weight="0"/>
   <Track File="drive_01.ogg" Weight="2" LoopIn="12.0" LoopOut="184.5"/>
   <Track File="drive_02.flac" Weight="1"/>
   <Track File="drive_03.wav" Weight="0"/>
@@ -101,6 +105,17 @@ replaced.
   picked. 0 keeps it in the folder but never picks it.
 - `LoopIn`, `LoopOut` (optional, seconds, both or neither): the loop
   region. The track plays from its start, then loops between the two.
+- `Game Name` (required) and `Weight` (optional, 1 by default): one of the
+  game's songs. The game still picks as it does; when it picks a song of
+  weight 0 (blocked) and the roll didn't already pick a custom track, one
+  of the folder's tracks or another game song it lists plays instead, by
+  weight. Unlisted game songs count as weight 1 but aren't stand-ins.
+  Outside the menu folders `Name` can be any of `bgm_tmp_01`-`17`
+  (including 02, 04, 12, 13, which the game never plays on its own) and a
+  game song stands in by handing `Bgm::Load` that name instead. In a menu
+  folder only `BGM_SYSTEM` (the folder's own song): the four share one bank
+  and are started by cue, so a blocked menu song can only give way to the
+  folder's tracks. Nothing to stand in: the blocked song plays anyway.
 
 Files not named in the XML are picked with weight 1 and loop whole. A
 mistake in the XML is logged: a bad value or broken XML turns that folder
@@ -119,7 +134,9 @@ the folders and picks), and `src/hooks/xma.cpp` (the swap).
    (`sub_82106540`). Its return address says which category it is (the
    table in `custom_music.cpp`). The roll uses our own random numbers, so
    the game's sequence (and its replays) is unchanged. A hit picks a track
-   by weight and opens it.
+   by weight and opens it. On a miss, a blocked game song is replaced:
+   another game song by rewriting r4 to that name in Bgm::Load's own list
+   (`0x820069B0`), or a track as on a hit.
 3. **The swap:** the music is the only stereo XMA sound. When the next one
    starts, `xma.cpp` reads the custom track instead of decoding the XMA
    data. The game's voice, volume, fades and stop calls are untouched: it
@@ -155,6 +172,8 @@ the folders and picks), and `src/hooks/xma.cpp` (the swap).
   once, as the game's does, so a long custom track there could hold up
   whatever waits for it (the race exit waits for the screen fades, not the
   music, as far as known).
+- A blocked song's stand-in, in play (the game loads another bank than it
+  asked for; nothing else is known to use the name).
 - Whether the music ever restarts within one `Bgm::Load` (logged as
   "restarted" with `--custom_music_log`).
 - The volume path (ducking) still applies, since the game's voice plays

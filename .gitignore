@@ -4,6 +4,10 @@
 /assets/*
 !/assets/PATCH_DATA/
 !/assets/ADDON_DATA/
+# Custom music: the category folders and their metadata.xml are in the repo,
+# the music people add isn't.
+/assets/ADDON_DATA/CUSTOM_MUSIC/*/*
+!/assets/ADDON_DATA/CUSTOM_MUSIC/*/metadata.xml
 
 # Build output
 /sbx_recomp/out/

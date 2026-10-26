@@ -54,7 +54,7 @@ bool IsMusicFile(const std::filesystem::path& path) {
 }
 
 void Library::Scan(const std::filesystem::path& root, const std::vector<std::string>& categories,
-                   const Log& log) {
+                   const Log& log, const ValidGame& valid_game) {
   folders_.clear();
   std::error_code ec;
   if (!std::filesystem::is_directory(root, ec)) {
@@ -144,6 +144,28 @@ void Library::Scan(const std::filesystem::path& root, const std::vector<std::str
     folder.category = *category;
     folder.replace_chance = metadata.replace_chance;
 
+    // The game's songs it weighs.
+    for (const GameEntry& g : metadata.game) {
+      if (!valid_game(*category, g.name)) {
+        log(Level::kWarning, where + "/" + kMetadataName + ", line " + std::to_string(g.line) +
+                                 ": the game's " + g.name + " can't play in " + *category +
+                                 "; ignored");
+        continue;
+      }
+      const bool twice = std::any_of(folder.game.begin(), folder.game.end(),
+                                     [&](const GameEntry& e) { return SameName(e.name, g.name); });
+      if (twice) {
+        log(Level::kWarning, where + "/" + kMetadataName + ", line " + std::to_string(g.line) +
+                                 ": " + g.name + " is listed twice; the first counts");
+        continue;
+      }
+      if (g.weight != 1) {
+        log(Level::kInfo, where + ": the game's " + g.name + ", weight " + Seconds(g.weight) +
+                              (g.weight == 0 ? " (blocked)" : ""));
+      }
+      folder.game.push_back(g);
+    }
+
     // Tracks named in the XML that aren't in the folder.
     for (const TrackEntry& t : metadata.tracks) {
       const bool found = std::any_of(files.begin(), files.end(), [&](const auto& f) {
@@ -220,6 +242,52 @@ double Library::Chance(const std::string& category, double fallback) const {
     return 0;
   }
   return std::clamp(f->replace_chance.value_or(fallback), 0.0, 1.0);
+}
+
+double Library::GameWeight(const std::string& category, const std::string& name) const {
+  const Folder* f = Find(category);
+  if (!f) {
+    return 1;
+  }
+  for (const auto& g : f->game) {
+    if (SameName(g.name, name)) {
+      return g.weight;
+    }
+  }
+  return 1;
+}
+
+std::optional<Substitute> Library::PickSubstitute(const std::string& category,
+                                                  const std::string& blocked,
+                                                  std::mt19937& rng) const {
+  const Folder* f = Find(category);
+  if (!f) {
+    return std::nullopt;
+  }
+  // The folder's tracks, then the game songs it lists (but the blocked one).
+  std::vector<double> weights;
+  double total = 0;
+  for (const auto& e : f->entries) {
+    weights.push_back(e.weight);
+    total += e.weight;
+  }
+  for (const auto& g : f->game) {
+    const double w = SameName(g.name, blocked) ? 0 : g.weight;
+    weights.push_back(w);
+    total += w;
+  }
+  if (total <= 0) {
+    return std::nullopt;
+  }
+  std::discrete_distribution<size_t> pick(weights.begin(), weights.end());
+  const size_t i = pick(rng);
+  Substitute s;
+  if (i < f->entries.size()) {
+    s.custom = f->entries[i].choice;
+  } else {
+    s.game = f->game[i - f->entries.size()].name;
+  }
+  return s;
 }
 
 size_t Library::Count(const std::string& category) const {

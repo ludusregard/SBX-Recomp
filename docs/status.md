@@ -41,9 +41,12 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 - Custom music: tracks from `assets/ADDON_DATA/CUSTOM_MUSIC/<CATEGORY>/`
   (ogg, opus, flac, mp3, wav) play in the place of the game's music by a
   roll at each music start (`--new_music_roll`, 0 by default, or a folder's
-  `metadata.xml`), with weights and loop regions; `--custom_music` (on by
-  default), `--custom_music_log`, `--custom_music_shuffle` (on by default) (`src/hooks/custom_music.cpp`,
-  `src/audio/music/`, `docs/custom_music.md`). FFmpeg now also has the
+  `metadata.xml`), with weights and loop regions. Each folder's
+  `metadata.xml` also weighs the game's own songs: weight 0 blocks one, and
+  another song of the folder plays in its place. `--custom_music` (on by
+  default), `--custom_music_log`, `--custom_music_shuffle` (on by default)
+  (`src/hooks/custom_music.cpp`, `src/audio/music/`,
+  `docs/custom_music.md`). FFmpeg now also has the
   ogg, flac, mp3 and wav demuxers, their decoders and libswresample.
   Built on Windows and working in the game (2026-10-26): the menu songs,
   roaming, looping and shuffle. The category folders and a user guide

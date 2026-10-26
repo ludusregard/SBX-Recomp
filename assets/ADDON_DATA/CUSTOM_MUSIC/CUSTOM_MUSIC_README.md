@@ -1,8 +1,9 @@
 # Custom music
 
-Play your own music in Shutoko Battle X in place of the game's. Put music
-files in the folder for the part of the game you want, set how often they
-should play, and start the game.
+Play your own music in Shutoko Battle X in place of the game's, or just
+stop a game song you don't like from playing. Put music files in the folder
+for the part of the game you want, set how often they should play, and
+start the game.
 
 ## Quick start
 
@@ -27,7 +28,10 @@ should play, and start the game.
 | `MENU_COURSE` | The course select |
 | `MENU_STORY` | The dialog after some story events |
 
-- A folder with no music in it leaves that part of the game alone.
+- A folder with no music in it leaves that part of the game alone (unless
+  you block a game song, below).
+- Each folder has a `metadata.xml` listing the game's own songs for it.
+  As it comes, it changes nothing.
 - Folder names can be upper or lower case. Any other folder here is
   ignored (the log says so).
 - The music select (when you pick a track yourself in the game) is never
@@ -60,6 +64,37 @@ Which track plays is picked at random from the folder, by weight (all
 equal unless `metadata.xml` says otherwise). The game's own fades, stops and
 volume settings still apply to your music.
 
+## Blocking the game's songs
+
+Each folder's `metadata.xml` lists the game's songs that play there, all
+at weight 1:
+
+```xml
+<Music Category="ROAMING">
+  <Game Name="bgm_tmp_06" Weight="1"/>  <!-- the usual highway song -->
+  <Game Name="bgm_tmp_07" Weight="1"/>  <!-- picked at random in some game modes -->
+  ...
+</Music>
+```
+
+Set a song's weight to `0` to block it. The game still picks its music as
+usual, but when it picks a blocked song, something else from the same
+folder plays instead, picked by weight: one of the game songs listed there,
+or one of your tracks. This works without any music of your own and
+without `--new_music_roll`.
+
+- In the folders other than the menus, you can list any of the game's
+  songs, `bgm_tmp_01` to `bgm_tmp_17`, to have it stand in for a blocked
+  one. That includes `bgm_tmp_02`, `04`, `12` and `13`, which the game
+  never plays on its own. Add a line like
+  `<Game Name="bgm_tmp_12" Weight="1"/>`.
+- The other weights only matter when standing in for a blocked song: a
+  game song that isn't blocked still plays whenever the game picks it.
+- The four menu songs share one sound bank, so a menu folder can only list
+  its own song (`BGM_SYSTEM`). A blocked menu song can only be replaced by
+  your tracks in that folder; with none there, it plays anyway.
+- If everything in a folder is blocked, the game's pick plays anyway.
+
 ## When a track ends
 
 If the game's music would have looped, the next track from the same folder
@@ -71,11 +106,14 @@ Music the game plays only once (after a race) plays once.
 
 ## metadata.xml (optional)
 
-A `metadata.xml` in a folder sets weights, loop points and that folder's
-chance. Without one, every track has weight 1 and loops whole.
+A folder's `metadata.xml` sets the weights of the game's songs and your
+tracks, loop points and that folder's chance. Any part can be left out;
+without the file, every track has weight 1 and loops whole.
 
 ```xml
 <Music Category="ROAMING" ReplaceChance="0.5">
+  <Game Name="bgm_tmp_06" Weight="1"/>
+  <Game Name="bgm_tmp_05" Weight="0"/>
   <Track File="drive_01.ogg" Weight="2" LoopIn="12.0" LoopOut="184.5"/>
   <Track File="drive_02.flac" Weight="1"/>
   <Track File="drive_03.wav" Weight="0"/>
@@ -86,29 +124,34 @@ chance. Without one, every track has weight 1 and loops whole.
 |---|---|---|
 | `Category` | `Music` | Optional. If given, it must match the folder's name. |
 | `ReplaceChance` | `Music` | Optional, 0 to 1. This folder's chance, instead of `--new_music_roll`. |
+| `Name` | `Game` | Required. One of the game's songs: `bgm_tmp_01` to `bgm_tmp_17`, or `BGM_SYSTEM` in a menu folder. |
+| `Weight` | `Game` | Optional, 0 or more, 1 by default. 0 blocks the song; otherwise, how likely it is to stand in for a blocked song. |
 | `File` | `Track` | Required. A music file in this folder. |
 | `Weight` | `Track` | Optional, 0 or more, 1 by default. A track with weight 2 is picked twice as often as one with weight 1; 0 is never picked. |
 | `LoopIn`, `LoopOut` | `Track` | Optional, in seconds, both or neither. The track plays from its start, then loops between these two points. Used only with shuffle off (`--custom_music_shuffle=false`); with shuffle on, the whole track plays and the next one follows. |
 
 - Files in the folder but not in the XML are picked with weight 1.
+- A game song that isn't listed is never blocked, and never stands in for
+  a blocked one.
 - Mistakes are logged. A broken XML file or a bad value (a weight of -1,
   say) turns that folder off until fixed. Smaller mistakes (an unknown
   attribute, a file that isn't there) are skipped.
 
-### Making metadata.xml files for you
+### Adding your tracks to metadata.xml for you
 
-`generate_metadata.py`, in this folder, writes a starting `metadata.xml` in
-every folder that has music, listing each file at weight 1. Edit the
-results to change weights or add loop points. It needs Python 3:
+`generate_metadata.py`, in this folder, adds every music file a folder's
+`metadata.xml` doesn't list yet, at weight 1, and leaves the rest of the
+file as it is. Then edit the weights or add loop points. A folder without a
+`metadata.xml` gets a new one (with the game's songs, for the category
+folders). It needs Python 3:
 
 ```
-python generate_metadata.py            write the files
-python generate_metadata.py --dry-run  show what it would write
-python generate_metadata.py --force    also replace existing metadata.xml files
+python generate_metadata.py            add new tracks, make missing files
+python generate_metadata.py --dry-run  show what it would change
+python generate_metadata.py --force    remake every metadata.xml as it first came
 ```
 
-A folder that already has a `metadata.xml` is left alone unless you use
-`--force`.
+`--force` throws away your edits to the `metadata.xml` files.
 
 ## All the options
 
@@ -144,6 +187,6 @@ Common problems:
 
 ## Git
 
-Each folder's `.gitignore` keeps your music and `metadata.xml` files out of
-git, so they never end up in the repo. Don't delete those files: they keep
-the empty folders in place.
+The music you add here is kept out of git, so it never ends up in the
+repo. The `metadata.xml` files are part of the repo, so git shows them as
+changed once you edit them.

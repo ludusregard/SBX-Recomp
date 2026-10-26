@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BOSS: see ../CUSTOM_MUSIC_README.md.
+
+  The game's own songs here. The game picks as it always does; a song with
+  Weight="0" is blocked: when the game picks it, another song from this
+  folder plays instead, by weight (one of the game songs listed here, or
+  one of your tracks).
+
+  Any of bgm_tmp_01 to bgm_tmp_17 can be listed, including 02, 04, 12 and
+  13, which the game never plays on its own (they can play only as a stand-in
+  for a blocked song).
+
+  Your tracks: <Track File="name.ogg" Weight="1"/>. Music files in this
+  folder that aren't listed play at weight 1. Optional: LoopIn and LoopOut
+  (seconds) for a loop region (used only when shuffle is turned off),
+  and ReplaceChance="0.5" on <Music> for this folder's chance.
+-->
+<Music Category="BOSS">
+  <Game Name="bgm_tmp_03" Weight="1"/>  <!-- rival class 3 -->
+  <Game Name="bgm_tmp_09" Weight="1"/>  <!-- some class 3 and 4 rivals -->
+  <Game Name="bgm_tmp_17" Weight="1"/>  <!-- some class 3 and 4 rivals -->
+  <Game Name="bgm_tmp_11" Weight="1"/>  <!-- one class 4 rival -->
+  <Game Name="bgm_tmp_16" Weight="1"/>  <!-- rival class 5 -->
+</Music>
