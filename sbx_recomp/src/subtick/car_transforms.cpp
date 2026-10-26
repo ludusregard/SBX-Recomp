@@ -51,14 +51,21 @@
 #include "subtick/game_messages.h"
 
 #include <rex/cvar.h>
+#include <rex/logging.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <set>
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
+
+REXCVAR_DEFINE_BOOL(log_record_matrix, false, "SBX",
+                    "Log the first 40 view-projections the recorder draws with (which camera the race world uses)");
+REXCVAR_DEFINE_INT32(camera_fov, 0, "SBX",
+                     "Vertical field of view of the main camera, in degrees (10 to 170); 0 is the game's own");
 
 namespace subtick {
 
@@ -229,6 +236,93 @@ void CameraBegin(uint8_t* base, uint32_t address) {
   camera.held = true;
 }
 
+// --camera_fov: scales the main camera's projection (pass 0; the projection is
+// at +80, row-major, so P00 is at +80 and P11 at +100). It runs after the
+// game's update, because the update can rebuild the projection (a virtual call
+// before the matrix multiply) and so would overwrite a change made before it.
+// After a change the view-projection (+144) is rebuilt as view (+16) times the
+// projection, the same product the game makes. P11 is cot(fov / 2) and P00 is
+// P11 / aspect, so both take the same factor and the aspect is kept. The
+// game's own values are kept while the flag is off, and when the game writes
+// the projection again (anything other than what this wrote is taken as the
+// game's).
+constexpr uint32_t kMainCamera = 0x826AA8E0;
+constexpr uint32_t kProjectionP00 = 0x50;
+constexpr uint32_t kProjectionP11 = 0x64;
+constexpr uint32_t kProjection = 0x50;
+constexpr uint32_t kView = 0x10;
+constexpr uint32_t kViewProjection = 0x90;
+constexpr float kPi = 3.14159265358979f;
+
+struct MainFov {
+  bool applied = false;
+  float game_p00 = 0, game_p11 = 0;
+  float applied_p00 = 0, applied_p11 = 0;
+};
+MainFov g_main_fov;
+
+// view-projection (+144) = view (+16) times projection (+80), as the game builds it.
+void RebuildViewProjection(uint8_t* base, uint32_t address) {
+  float view[16];
+  float projection[16];
+  for (int i = 0; i < 16; i++) {
+    view[i] = guest::LoadFloat(base, address + kView + 4 * i);
+    projection[i] = guest::LoadFloat(base, address + kProjection + 4 * i);
+  }
+  float out[16];
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      out[r * 4 + c] = view[r * 4 + 0] * projection[0 * 4 + c] +
+                       view[r * 4 + 1] * projection[1 * 4 + c] +
+                       view[r * 4 + 2] * projection[2 * 4 + c] +
+                       view[r * 4 + 3] * projection[3 * 4 + c];
+    }
+  }
+  for (int i = 0; i < 16; i++) {
+    guest::StoreFloat(base, address + kViewProjection + 4 * i, out[i]);
+  }
+}
+
+void MainCameraFov(uint8_t* base, uint32_t address) {
+  if (address != kMainCamera) {
+    return;
+  }
+  float p00 = guest::LoadFloat(base, address + kProjectionP00);
+  float p11 = guest::LoadFloat(base, address + kProjectionP11);
+  bool was_applied = g_main_fov.applied;
+  if (g_main_fov.applied && (p00 != g_main_fov.applied_p00 || p11 != g_main_fov.applied_p11)) {
+    g_main_fov.applied = false;  // the game wrote the projection since
+  }
+  if (!g_main_fov.applied) {
+    if (!(std::isfinite(p00) && std::isfinite(p11) && p00 > 0 && p11 > 0)) {
+      return;
+    }
+    g_main_fov.game_p00 = p00;
+    g_main_fov.game_p11 = p11;
+  }
+  int degrees = REXCVAR_GET(camera_fov);
+  float new_p00 = g_main_fov.game_p00;
+  float new_p11 = g_main_fov.game_p11;
+  if (degrees >= 10 && degrees <= 170) {
+    float target_p11 = 1.0f / std::tan(float(degrees) * kPi / 360.0f);
+    float scale = target_p11 / g_main_fov.game_p11;
+    new_p00 = g_main_fov.game_p00 * scale;
+    new_p11 = g_main_fov.game_p11 * scale;
+    g_main_fov.applied = true;
+    g_main_fov.applied_p00 = new_p00;
+    g_main_fov.applied_p11 = new_p11;
+  } else {
+    g_main_fov.applied = false;
+  }
+  if (new_p00 != p00 || new_p11 != p11) {
+    guest::StoreFloat(base, address + kProjectionP00, new_p00);
+    guest::StoreFloat(base, address + kProjectionP11, new_p11);
+  }
+  if (was_applied || g_main_fov.applied) {
+    RebuildViewProjection(base, address);
+  }
+}
+
 }  // namespace
 
 void CarTransforms_Record(uint8_t* base, uint32_t car) {
@@ -377,6 +471,10 @@ void CarTransforms_CameraBegin(uint8_t* base, uint32_t address) {
   CameraBegin(base, address);
 }
 
+void CarTransforms_CameraFov(uint8_t* base, uint32_t address) {
+  MainCameraFov(base, address);
+}
+
 }  // namespace subtick
 
 // CameraPass::Update: r3 = the camera pass. Builds its view from its eye,
@@ -384,10 +482,33 @@ void CarTransforms_CameraBegin(uint8_t* base, uint32_t address) {
 // (above); the blend stays in the pass for the rest of the frame.
 extern "C" REX_FUNC(sub_820A3B98) {
   REX_FUNC_PROLOGUE();
-  if (!subtick::CarTransforms_CameraEnabled()) {
-    __imp__sub_820A3B98(ctx, base);
-    return;
+  const uint32_t pass = ctx.r3.u32;
+  if (subtick::CarTransforms_CameraEnabled()) {
+    subtick::CarTransforms_CameraBegin(base, pass);
   }
-  subtick::CarTransforms_CameraBegin(base, ctx.r3.u32);
   __imp__sub_820A3B98(ctx, base);
+  subtick::CarTransforms_CameraFov(base, pass);  // --camera_fov, after the game's update (any mode)
+}
+
+// Recorder::RecordObject (sub_8257ACD0): r4 = the view-projection the object is
+// drawn with. --log_record_matrix logs each new address once: whether it is a
+// camera pass's view-projection (and which), the caller, and the first row.
+extern "C" REX_FUNC(sub_8257ACD0) {
+  REX_FUNC_PROLOGUE();
+  if (REXCVAR_GET(log_record_matrix)) {
+    static std::set<uint32_t> seen;
+    uint32_t matrix = ctx.r4.u32;
+    if (seen.size() < 40 && seen.insert(matrix).second) {
+      int pass = -1;
+      uint32_t offset = matrix - 0x826AA8E0u;
+      if (matrix >= 0x826AA8E0u && offset < 21 * 592 && offset % 592 == 0x90) {
+        pass = int(offset / 592);
+      }
+      REXLOG_INFO("record matrix {:08X} (camera pass {}, from {:08X}): row0 {} {} {} {}",
+                  matrix, pass, uint32_t(ctx.lr), guest::LoadFloat(base, matrix),
+                  guest::LoadFloat(base, matrix + 4), guest::LoadFloat(base, matrix + 8),
+                  guest::LoadFloat(base, matrix + 12));
+    }
+  }
+  __imp__sub_8257ACD0(ctx, base);
 }

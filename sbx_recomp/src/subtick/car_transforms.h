@@ -59,5 +59,7 @@ void CarTransforms_EndFrame(uint8_t* base);
 // For the CameraPass::Update wrapper: r3 = the camera pass.
 bool CarTransforms_CameraEnabled();
 void CarTransforms_CameraBegin(uint8_t* base, uint32_t address);
+// --camera_fov: scales the main camera's projection after its update (any mode).
+void CarTransforms_CameraFov(uint8_t* base, uint32_t address);
 
 }  // namespace subtick

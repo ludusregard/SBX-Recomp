@@ -137,7 +137,7 @@ handles), which is fine: the unit of work is a subsystem, not a function.
 
 ## Testing
 
-- Attract races without the user: `--skip_intro --attract_after_s=1`
+- Attract races without the user: `--skip_cutscenes --attract_after_s=1`
   under `timeout`, read the log, frames with `--native_renderer_dump`
   (CLAUDE.md, "Build and run").
 - Speed: uncapped (`--max_fps=0`) alternating runs; for changes under a

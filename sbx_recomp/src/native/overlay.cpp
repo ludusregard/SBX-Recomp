@@ -366,6 +366,8 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"height", {"Graphics", "Window"}},
       {"fullscreen", {"Graphics", "Window"}},
       {"overlay_font", {"Graphics", "Overlay"}},
+      {"camera_fov", {"Graphics", "Camera"}},
+      {"log_record_matrix", {"Logging", "Debugging"}},
       {"blur_frame_blend", {"Graphics", "Experimental"}},
       {"blur_frame_blend_center", {"Graphics", "Experimental"}},
       {"blur_frame_blend_edge", {"Graphics", "Experimental"}},

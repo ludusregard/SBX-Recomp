@@ -61,7 +61,7 @@ with no row); run it after changing either.
 | `sub_82106410` |  |  | Picks the handler object a message goes to; its method 0 handles it. |
 | `sub_82099700` | `Input::Update` | Wrapped | r3 the input manager: physical pads (+988, 4 x 212, `PhysicalPad::Read`), logical pads (+8, 5 x 196, `LogicalPad::Build`), processors (+1840, 5 x 416, vtable slot 1), listener slots (+3924, 5 x 12; the first node's object, vtable slot 1). Skipped on render-only passes (`src/subtick/input.cpp`). |
 | `sub_82159540` | `Race::DrawStep` | Wrapped | The race's draw step (Draw message). Writes a field at +64 of the object its calls return. Noted to tell races from menus (`src/subtick/game_messages.cpp`). |
-| `sub_820A3B98` | `CameraPass::Update` | Wrapped | Rebuilds a camera pass's view (+0x10) from its eye, target and up vector (+0x190, +0x1A0, +0x1B0), and its view-projection (+0x90 = view * projection at +0x50). Called several times per Draw for pass 0. On pass 0 in a race, built from the camera blended between ticks; also run on pass 0 before `Race::DrawStep` on render-only passes, so the cars are drawn with the frame's view-projection (`src/subtick/car_transforms.cpp`, see "Subtick"). |
+| `sub_820A3B98` | `CameraPass::Update` | Wrapped | Scales the main camera's projection after the update (`--camera_fov`, `CarTransforms_CameraFov`), then rebuilds the view-projection. Rebuilds a camera pass's view (+0x10) from its eye, target and up vector (+0x190, +0x1A0, +0x1B0), and its view-projection (+0x90 = view * projection at +0x50). Called several times per Draw for pass 0. On pass 0 in a race, built from the camera blended between ticks; also run on pass 0 before `Race::DrawStep` on render-only passes, so the cars are drawn with the frame's view-projection (`src/subtick/car_transforms.cpp`, see "Subtick"). |
 | `sub_8209BE70` | `Matrix::Multiply` |  | out (r3) = a (r4) * b (r5), 4x4. |
 | `sub_8257ACD0` | `Recorder::RecordObject` |  | The bulk per-object recorder, ~150 calls per pass in a race: records command 7 with vertex constants 0-8: world (r5) * camera view-projection (r4) in c0-c3, the world matrix in c4-c7 (for some objects a projective matrix instead), and the camera's world position in c8. The camera is often a stack copy, not a camera pass. |
 | `sub_8257AAE0` |  |  | Multiplies a world matrix and camera into a stack temporary; not recorded (likely a visibility test). |
@@ -304,11 +304,11 @@ Also loaded, and not yet checked:
 
 Integer frame counts (for example `cmpwi r11,60`) aren't included.
 
-## Tick rate experiments (parked)
+## Tick rate experiments (removed 2026-10-25)
 
 A true tick rate upgrade: all game logic at 60 ticks a second. Parked: the
 game keeps its 30 Hz tick (see "Subtick"), as the original replays depend
-on it. `src/tick_rate/tick_rate.cpp`, two switches, both off by default:
+on it. The two switches below (`src/tick_rate/tick_rate.cpp`, both off by default) were removed on 2026-10-25 with the code (`src/tick_rate/` is to be deleted by hand); the findings are kept:
 
 - `--tick_rate_60`: the present interval is 1 vblank instead of 2
   (`sub_82573100`), so the main loop and all game logic run 60 times a
@@ -445,6 +445,7 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
   billboards face (`sub_8209C800`). Put back right after each call, those
   got the tick's eye against a blended view: the reflections and the head
   and tail light glows shook while the geometry didn't.
+- **`--camera_fov`** (`car_transforms.cpp`, `CarTransforms_CameraFov`, called in the `sub_820A3B98` wrapper after the game's update, with or without `--subtick`): scales pass 0's projection, P00 (+80) and P11 (+100, the row-major diagonal), by one factor, so P11 = cot(fov / 2) and the aspect is kept. Then view-projection (+144) is rebuilt as view (+16) times projection, as `sub_8209BE70` does. Values 10 to 170 degrees; 0 is the game's own. The game's values are kept and put back when the flag is 0, and taken again when the game writes the projection. Before the update, the projection was not used: the update calls a virtual method on the pass (slot 0 of its vtable, `f1` = the constant at `0x82000A24`, `r4`/`r5` = +504/+508) before it builds the view and the view-projection, so a change made earlier can be overwritten. Not yet checked in the game; the recorder sometimes draws from a stack copy of the camera (see "Recorder"), so the race world may not follow pass 0.
 - **Cars and the view-projection** (`CarTransforms_RebuildCamera`): the
   cars' parts are drawn with pass 0's +144 as it is when `Car::DrawUpdate`
   runs (the part draw multiplies it with car+16 into the frame's draw

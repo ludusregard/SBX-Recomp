@@ -14,7 +14,7 @@ own audio output (`src/audio/`, `--native_audio`). The Vulkan build can
 also anti-alias the race's 3D view with CMAA2 (`--cmaa2`,
 `--cmaa2_threshold`) or FXAA (`--fxaa`), both working (the user's test,
 2026-10-25), and blur it by blending frames away from the screen's centre
-(`--frame_blend`, with `--subtick` and a high `--max_fps`; not yet tested). Codegen is clean: 15,963
+(`--blur_frame_blend`, off by default, with `--subtick` and a high `--max_fps`; not yet tested). Codegen is clean: 15,963
 functions, no unresolved branches or calls. What else came over from
 ITC-Recomp, and what's next: `docs/itc-parity.md`.
 
@@ -55,9 +55,9 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   and steering step per tick; check the light sources on car models for the
   same camera-position shake the paint reflections had. Off by default (`src/subtick/`; "Subtick" in
   `docs/functions.md`).
-- Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`,
-  `src/tick_rate/`): a true 60 Hz tick, parked ("Tick rate experiments" in
-  `docs/functions.md`).
+- Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`): removed
+  2026-10-25; `src/tick_rate/` is to be deleted by hand. Their findings are in
+  "Tick rate experiments" in `docs/functions.md`.
 
 ## Mod tools
 
@@ -82,6 +82,7 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 - The rest of ITC-Recomp's parity plan (`docs/itc-parity.md`): XACT
   natively, the SDK's kernel calls, the game's code natively. (XMA decoding
   through FFmpeg is in, both builds.)
-- `--skip_intro`'s wait once the fast-forward ends: the pacer's next tick
+- `--skip_cutscenes`'s wait once the fast-forward ends: the pacer's next tick
   is now clamped to one tick ahead (`subtick/frame_pacer.cpp`); to confirm.
+- `--camera_fov` (the main camera's vertical FOV, Graphics/Experimental): works in the game (the user's test, 2026-10-25). Safe range 30 to 60 degrees (the game is about 47). Limitation: it changes every use of camera pass 0, so the replay and wanderer/boss cinematic camera tracks are affected too. Limiting it to racing is planned (`docs/functions.md`, "Main camera"), and the `--log_record_matrix` diagnostic is still in the code (off).
 - A CI build.

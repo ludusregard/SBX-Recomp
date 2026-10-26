@@ -1,6 +1,6 @@
 # ImGui debug overlay in the Vulkan build (plan)
 
-Written 2026-10-25, parked by the user's call (to do in a later session).
+Written 2026-10-25. Built the same day: the Vulkan build's overlay has the tabs, search across all of them, the embedded Intel One Mono font and the lime accent. The sections below are the plan it followed.
 The emulated GPU build has the SDK's live ImGui overlay (settings toggled
 while the game runs); the Vulkan build doesn't, because the overlay draws
 through the SDK's window and presenter, and the native renderer hides that
