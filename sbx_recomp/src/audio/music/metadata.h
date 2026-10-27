@@ -1,7 +1,7 @@
 // A custom music folder's metadata.xml (docs/custom_music.md):
 //
 //   <Music Category="ROAMING" ReplaceChance="0.5">
-//     <Track File="drive_01.ogg" Weight="2" LoopIn="12.0" LoopOut="184.5"/>
+//     <Track File="drive_01.ogg" Weight="2" LoopIn="12.0" LoopOut="184.5" Volume="1.5"/>
 //     <Track File="drive_02.flac"/>
 //     <Game Name="bgm_tmp_05" Weight="0"/>
 //   </Music>
@@ -24,6 +24,8 @@ namespace audio::music {
 struct TrackEntry {
   std::string file;  // UTF-8, as written
   double weight = 1;
+  // The track's level, 0 to 2 (1 is as the file is; 2 is +6 dB).
+  double volume = 1;
   // The loop region in seconds; unset: the whole track loops.
   std::optional<double> loop_in, loop_out;
   int line = 0;  // where it is in the file, for messages

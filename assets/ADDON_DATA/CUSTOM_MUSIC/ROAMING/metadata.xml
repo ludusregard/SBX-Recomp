@@ -1,21 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  ROAMING: see ../CUSTOM_MUSIC_README.md.
-
-  The game's own songs here. The game picks as it always does; a song with
-  Weight="0" is blocked: when the game picks it, another song from this
-  folder plays instead, by weight (one of the game songs listed here, or
-  one of your tracks).
-
-  Any of bgm_tmp_01 to bgm_tmp_17 can be listed, including 02, 04, 12 and
-  13, which the game never plays on its own (they can play only as a stand-in
-  for a blocked song).
-
-  Your tracks: <Track File="name.ogg" Weight="1"/>. Music files in this
-  folder that aren't listed play at weight 1. Optional: LoopIn and LoopOut
-  (seconds) for a loop region (used only when shuffle is turned off),
-  and ReplaceChance="0.5" on <Music> for this folder's chance.
--->
+<!-- ROAMING: see ../CUSTOM_MUSIC_README.md -->
 <Music Category="ROAMING">
   <Game Name="bgm_tmp_06" Weight="1"/>  <!-- the usual highway song -->
   <Game Name="bgm_tmp_07" Weight="1"/>  <!-- picked at random in some game modes -->
@@ -23,4 +7,8 @@
   <Game Name="bgm_tmp_15" Weight="1"/>  <!-- picked at random in some game modes -->
   <Game Name="bgm_tmp_05" Weight="1"/>  <!-- picked at random in some game modes -->
   <Game Name="bgm_tmp_10" Weight="1"/>  <!-- picked at random in some game modes -->
+  <Track File="RB-01 - DRIVELINE.opus" Weight="1"/>
+  <Track File="RB-01 - SHAKEDOWN (B Mix).opus" Weight="1"/>
+  <Track File="RB-01 - SPECIAL STAGE.opus" Weight="1"/>
+  <Track File="THE FIRST DREAM - HYPNO (Vidoc Mix).opus" Weight="1"/>
 </Music>

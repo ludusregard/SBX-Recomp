@@ -111,7 +111,7 @@ the labels are from the code, not yet checked in play):
 | `0x8217433C` | the same, bit 0x800 | `bgm_tmp_17` | BOSS |
 | `0x8217436C` | the same, bit 0x1000 | `bgm_tmp_11` | BOSS |
 | `0x8217439C` | the same, bit 0x2000 | `bgm_tmp_16` | BOSS |
-| `0x82174C84` | `sub_82174AD0` | `bgm_tmp_08` (the lose music) | RACE_LOSE |
+| `0x82174C84` | `sub_82174AD0` | `bgm_tmp_14` if the race was won, else `bgm_tmp_08` (entry 11 or 12 of the table at `0x82609334`) | RACE_WIN or RACE_LOSE, by the name |
 | `0x82262678` | `sub_822624F0` | `bgm_tmp_14` (the win music) | RACE_WIN |
 | `0x822626B0` | the same | `bgm_tmp_08` | RACE_LOSE |
 | `0x821B8788` | `sub_821B8580` | any of the 17, by a setting (`[[r31+32544]+740]`): the music select | never replaced |

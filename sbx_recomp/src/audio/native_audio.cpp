@@ -24,7 +24,7 @@
 
 #include "guest.h"
 
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
 #include "movies/player.h"
 #endif
 
@@ -363,7 +363,7 @@ class SbxAudioSystem : public rex::audio::AudioSystem {
         // The playing movie's sound, if any, for this frame's time (ITC's
         // docs/native-movies.md: its stereo added to the front channels).
         std::array<float, 2 * kChannelSamples> movie{};
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
         movies::MixSoundingAudio(movie.data(), kChannelSamples);
 #endif
         auto convert = [&](const Frame& frame) {

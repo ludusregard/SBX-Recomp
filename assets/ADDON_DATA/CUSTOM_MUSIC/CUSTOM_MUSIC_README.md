@@ -104,6 +104,24 @@ the game with `--custom_music_shuffle=false`.
 
 Music the game plays only once (after a race) plays once.
 
+## Track levels
+
+Each track plays at its own level. Two ways to change it:
+
+- `Volume` in `metadata.xml` (0 to 2, 1 by default) sets one track's level:
+  0.5 is half as loud (-6 dB), 2 is twice as loud (+6 dB). Above 1 can
+  distort, since the loudest parts clip.
+- `--custom_music_adaptive_volume` (on by default) brings every track's
+  loudness up or down to the game's music's average, measured the way
+  streaming services measure it (LUFS, ITU-R BS.1770). A track changes by at
+  most 12 dB. Each file is read once at start-up, so a big folder takes a
+  moment to load. Set it to `false` to turn it off.
+
+A boosted track's loudest parts round off rather than clip flat. Adaptive
+volume measures a track's average level, not its loudest moment, but it
+can't fix a track mixed unusually quiet or loud on purpose: use `Volume`
+for that.
+
 ## metadata.xml (optional)
 
 A folder's `metadata.xml` sets the weights of the game's songs and your
@@ -129,24 +147,27 @@ without the file, every track has weight 1 and loops whole.
 | `File` | `Track` | Required. A music file in this folder. |
 | `Weight` | `Track` | Optional, 0 or more, 1 by default. A track with weight 2 is picked twice as often as one with weight 1; 0 is never picked. |
 | `LoopIn`, `LoopOut` | `Track` | Optional, in seconds, both or neither. The track plays from its start, then loops between these two points. Used only with shuffle off (`--custom_music_shuffle=false`); with shuffle on, the whole track plays and the next one follows. |
+| `Volume` | `Track` | Optional, 0 to 2, 1 by default. The track's level (see Track levels above). |
 
 - Files in the folder but not in the XML are picked with weight 1.
 - A game song that isn't listed is never blocked, and never stands in for
   a blocked one.
 - Mistakes are logged. A broken XML file or a bad value (a weight of -1,
-  say) turns that folder off until fixed. Smaller mistakes (an unknown
+  say, or a Volume above 2) turns that folder off until fixed. Smaller mistakes (an unknown
   attribute, a file that isn't there) are skipped.
 
 ### Adding your tracks to metadata.xml for you
 
-`generate_metadata.py`, in this folder, adds every music file a folder's
-`metadata.xml` doesn't list yet, at weight 1, and leaves the rest of the
-file as it is. Then edit the weights or add loop points. A folder without a
-`metadata.xml` gets a new one (with the game's songs, for the category
-folders). It needs Python 3:
+`generate_metadata.py`, in this folder, updates each folder's
+`metadata.xml` and leaves everything else in it as it is. A music file the
+file doesn't list yet is added at weight 1. A `<Track>` whose file is no
+longer in the folder is commented out, so its weight and loop points are
+kept but it's switched off. Then edit the weights or add loop points. A
+folder without a `metadata.xml` gets a new one (with the game's songs, for
+the category folders). It needs Python 3:
 
 ```
-python generate_metadata.py            add new tracks, make missing files
+python generate_metadata.py            add new tracks, switch off missing ones, make new files
 python generate_metadata.py --dry-run  show what it would change
 python generate_metadata.py --force    remake every metadata.xml as it first came
 ```
@@ -155,13 +176,16 @@ python generate_metadata.py --force    remake every metadata.xml as it first cam
 
 ## All the options
 
-Add these to the game's command line:
+Add these to the game's command line. Changes take effect on restart: the
+options are read at start-up, and so is `metadata.xml` (editing a folder's
+XML while the game runs changes nothing until the next start).
 
 | Option | Default | What it does |
 |---|---|---|
 | `--custom_music` | `true` | `false` turns custom music off entirely. |
 | `--new_music_roll` | `0` | The chance (0 to 1) your music plays, for folders without a `ReplaceChance`. |
 | `--custom_music_shuffle` | `true` | When a track ends, play another from the folder. `false` loops the same track. |
+| `--custom_music_adaptive_volume` | `true` | Bring each track's loudness to the game's music's average (see Track levels). Restart to change. |
 | `--custom_music_log` | `false` | Log more detail: when each track starts, shuffles and the game's loop settings. |
 
 ## When something doesn't work

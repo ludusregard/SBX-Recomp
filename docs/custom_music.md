@@ -105,6 +105,9 @@ replaced.
   picked. 0 keeps it in the folder but never picks it.
 - `LoopIn`, `LoopOut` (optional, seconds, both or neither): the loop
   region. The track plays from its start, then loops between the two.
+- `Volume` (optional, 0 to 2, 1 by default): the track's level, as a factor
+  (0.5 is -6 dB, 2 is +6 dB). Above 1 can clip. It multiplies the adaptive
+  gain below.
 - `Game Name` (required) and `Weight` (optional, 1 by default): one of the
   game's songs. The game still picks as it does; when it picks a song of
   weight 0 (blocked) and the roll didn't already pick a custom track, one
@@ -116,6 +119,37 @@ replaced.
   folder only `BGM_SYSTEM` (the folder's own song): the four share one bank
   and are started by cue, so a blocked menu song can only give way to the
   folder's tracks. Nothing to stand in: the blocked song plays anyway.
+
+### Levels
+
+`--custom_music_adaptive_volume` (on by default; a restart to change, not
+live) gives each track a gain
+that brings its integrated loudness (LUFS, ITU-R BS.1770, gated) to
+-11.2 LUFS: the mean of seven game songs measured through the XMA path
+(bgm_tmp_06, 07, 14 and the four BGM_SYSTEM songs: -9.6 to -12.6 each). The
+change is capped at 12 dB either way.
+
+`Track::Measure` decodes the whole file at its own rate and channels and
+computes the BS.1770 integrated loudness (K-weighting, 400 ms blocks, the
+-70 LUFS and relative -10 LU gates). It agrees with FFmpeg's `ebur128` to
+0.1 LU on the game's songs and the friend's three.
+
+Measured against the target: SUNBURN +3.1 dB, SHAKEDOWN +1.1 dB, HYPNO
+-2.9 dB. SHAKEDOWN's boost would hard-clip about 15,500 samples (0.26%),
+so the gain is followed by a soft clip above 0.9 of full scale (a tanh
+knee into full scale). With it the same boost has no full-scale samples.
+
+The gain is found in `Library::Scan`, once per file at start-up, as is
+`metadata.xml`: neither is re-read while the game runs (about
+half a second for four minutes of audio across the friend's three tracks),
+so shuffle's next track has its gain ready and nothing decodes on the audio
+thread. The track's gain (`Track::SetGain`) is applied as its samples are
+converted, after the resampler, so the mono-to-stereo mix and the loop
+points are unchanged.
+
+Not used: FFmpeg's `dynaudnorm` (DynamicAudioNormalizer). It changes gain
+continuously over the track, which is a live leveler, not a fixed match.
+It's also in libavfilter, which our FFmpeg build doesn't include.
 
 Files not named in the XML are picked with weight 1 and loop whole. A
 mistake in the XML is logged: a bad value or broken XML turns that folder
@@ -178,3 +212,6 @@ the folders and picks), and `src/hooks/xma.cpp` (the swap).
   "restarted" with `--custom_music_log`).
 - The volume path (ducking) still applies, since the game's voice plays
   the track.
+- Adaptive volume and `Volume` in play: the log's `LUFS … adaptive …` and
+  `volume …` values, and the level against the game's music. Not yet
+  checked by ear.

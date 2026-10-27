@@ -3,13 +3,17 @@
 On Windows, from `sbx_recomp/`:
 
 ```bat
-codegen.bat      rem configure, build rexglue, recompile the XEX, configure again
-build.bat        rem out\build\win-amd64-relwithdebinfo\sbx.exe
-run.bat          rem the game, against ..\assets, on the emulated GPU
-run-debug.bat    rem the same with debug logging
+codegen.bat           rem configure, build rexglue, recompile the XEX, configure again
+build_vulkan.bat      rem out\build\win-amd64-relwithdebinfo-vulkan\sbx.exe
+run_vulkan.bat        rem the game, against ..\assets, on the native Vulkan renderer
+run_vulkan.bat --log_level=debug   rem the same, with debug logging
+package_release.bat   rem release\sbx-vulkan.zip: sbx.exe, its DLLs and a launcher (no game files)
 ```
 
-- Build logs: `out\codegen.log`, `out\build.log`.
+- Build logs: `out\codegen.log`, `out\build_vulkan.log`.
+- The emulated GPU build (`build.bat`, `run.bat`, `run-debug.bat`) was removed on
+  2026-10-26; `cull_emulated_build.ps1` deletes what's left of it. The SDK's Xenos
+  plugin is no longer built.
 - The game files live in `assets/` (the user's copy, not committed). The
   manifest reads the retail `assets/default.xex`; the Python tools need the
   decrypted copy, `assets/default.xex.decrypt`.

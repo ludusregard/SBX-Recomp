@@ -1,16 +1,15 @@
 # Status
 
-The state of `main` (2026-10-25). Update this when a fix, experiment or
+The state of `main` (2026-10-26). Update this when a fix, experiment or
 plan changes.
 
 ## Working
 
-Boots and runs on Windows in two builds: the emulated GPU (`build.bat`,
-`run.bat`; the SDK's Xenos emulation, the debugging reference) and the
-native Vulkan renderer ported from ITC-Recomp (`build_vulkan.bat`,
-`run_vulkan.bat`; `SBX_NATIVE_RENDERER=ON`, `docs/native-renderer-port.md`),
-which also plays the movies through FFmpeg (`src/movies/`). Both use our
-own audio output (`src/audio/`, `--native_audio`). The Vulkan build can
+Boots and runs on Windows with the native Vulkan renderer ported from
+ITC-Recomp (`build_vulkan.bat`, `run_vulkan.bat`, `docs/native-renderer-port.md`).
+It's the only build since 2026-10-26: the emulated GPU build was removed (the
+SDK's Xenos plugin is no longer built). It also plays the movies
+through FFmpeg (`src/movies/`). It uses our own audio output (`src/audio/`, `--native_audio`). The Vulkan build can
 also anti-alias the race's 3D view with CMAA2 (`--cmaa2`,
 `--cmaa2_threshold`) or FXAA (`--fxaa`), both working (the user's test,
 2026-10-25), and blur it by blending frames away from the screen's centre
@@ -44,8 +43,9 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   `metadata.xml`), with weights and loop regions. Each folder's
   `metadata.xml` also weighs the game's own songs: weight 0 blocks one, and
   another song of the folder plays in its place. `--custom_music` (on by
-  default), `--custom_music_log`, `--custom_music_shuffle` (on by default)
-  (`src/hooks/custom_music.cpp`, `src/audio/music/`,
+  default), `--custom_music_log`, `--custom_music_shuffle` (on by default),
+  `--custom_music_adaptive_volume` (on by default, loudness to -11.2 LUFS; restart to change),
+  and `Volume` in `metadata.xml` (track levels) (`src/hooks/custom_music.cpp`, `src/audio/music/`,
   `docs/custom_music.md`). FFmpeg now also has the
   ogg, flac, mp3 and wav demuxers, their decoders and libswresample.
   Built on Windows and working in the game (2026-10-26): the menu songs,
@@ -72,7 +72,7 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   same camera-position shake the paint reflections had. Off by default (`src/subtick/`; "Subtick" in
   `docs/functions.md`).
 - Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`): removed
-  2026-10-25; `src/tick_rate/` is to be deleted by hand. Their findings are in
+  2026-10-25; `cull_emulated_build.ps1` deletes `src/tick_rate/`. Their findings are in
   "Tick rate experiments" in `docs/functions.md`.
 
 ## Mod tools
@@ -101,4 +101,9 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 - `--skip_cutscenes`'s wait once the fast-forward ends: the pacer's next tick
   is now clamped to one tick ahead (`subtick/frame_pacer.cpp`); to confirm.
 - `--camera_fov` (the main camera's vertical FOV, Graphics/Experimental): works in the game (the user's test, 2026-10-25). Safe range 30 to 60 degrees (the game is about 47). Limitation: it changes every use of camera pass 0, so the replay and wanderer/boss cinematic camera tracks are affected too. Limiting it to racing is planned (`docs/functions.md`, "Main camera"), and the `--log_record_matrix` diagnostic is still in the code (off).
+- Shader table: `--dump_shader_compiles` (the dump that wrote the table
+  `graphics/compiled_shaders.h` is built from) was removed. The table stays;
+  a shader it doesn't hold still goes to the real compiler and is logged.
+  To remake the table, restore the dump branch from git history
+  (`src/hooks/shader_compiles.cpp`, before its removal) first.
 - A CI build.

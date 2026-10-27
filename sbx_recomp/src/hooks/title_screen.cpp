@@ -189,17 +189,3 @@ extern "C" REX_FUNC(sub_820A4678) {
   __imp__sub_820A4678(ctx, base);
 }
 
-// Movie::RenderFrame (ITC sub_820AE958, exact), the render thread's command
-// that draws the boot movie. The library's waits in the movie player for the
-// first decoded frame; if the movie step ended the movie before then, the
-// main thread would wait on the render thread in Boot::EndMovie while the
-// decoder never delivers (ITC: about 1 boot in 6 stalled that way). So
-// --skip_cutscenes waits for this. With the native renderer, the hook is in
-// hooks/movies.cpp (the movie on our own player).
-#ifndef SBX_NATIVE_RENDERER
-extern "C" REX_FUNC(sub_820AE840) {
-  REX_FUNC_PROLOGUE();
-  __imp__sub_820AE840(ctx, base);
-  hooks::TitleScreen_MovieRendered();
-}
-#endif

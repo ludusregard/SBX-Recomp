@@ -21,7 +21,9 @@
 //             0x8217433C  rival class 3 (392-397) or 4 (391): bgm_tmp_17
 //             0x8217436C  rival 398: bgm_tmp_11
 //             0x8217439C  rival class 5: bgm_tmp_16
-//   RACE_LOSE 0x82174C84  sub_82174AD0: bgm_tmp_08
+//   (race)    0x82174C84  sub_82174AD0: bgm_tmp_14 if the race was won, else
+//                         bgm_tmp_08 (entry 11 or 12 of the table at
+//                         0x82609334), so RACE_WIN or RACE_LOSE by the name
 //   RACE_WIN  0x82262678  sub_822624F0: bgm_tmp_14
 //   RACE_LOSE 0x822626B0  the same: bgm_tmp_08
 //
@@ -95,12 +97,19 @@ REXCVAR_DEFINE_BOOL(custom_music_shuffle, true, "SBX",
                     "of the folder instead");
 REXCVAR_DEFINE_BOOL(custom_music_log, false, "SBX",
                     "Custom music: log each roll and each time a track starts");
+REXCVAR_DEFINE_BOOL(custom_music_adaptive_volume, true, "SBX",
+                    "Custom music: bring each track's loudness (LUFS) to the game's music's "
+                    "average, so the tracks sit at a similar level. Read at start-up, so it "
+                    "takes effect on restart (not live)");
 
 namespace {
 
 // The "category" of the Bgm::Load call that loads BGM_SYSTEM: not a category
 // itself (see MenuSong).
 constexpr const char* kMenuBank = "MENU";
+// The race end call that plays either song: RACE_WIN or RACE_LOSE by the
+// bank's name (Choose).
+constexpr const char* kRaceEnd = "RACE_END";
 // Bgm::Load's list of bank names (BGM_SYSTEM and bgm_tmp_01-17).
 constexpr uint32_t kBankNames = 0x820069B0;
 
@@ -113,7 +122,7 @@ constexpr CallSite kCallSites[] = {
     {0x82107B38, kMenuBank},   {0x82173D80, "ROAMING"},   {0x8217424C, "BATTLE"},
     {0x8217427C, "BATTLE"},    {0x821742AC, "BATTLE"},    {0x821742DC, "BOSS"},
     {0x8217430C, "BOSS"},      {0x8217433C, "BOSS"},      {0x8217436C, "BOSS"},
-    {0x8217439C, "BOSS"},      {0x82174C84, "RACE_LOSE"}, {0x82262678, "RACE_WIN"},
+    {0x8217439C, "BOSS"},      {0x82174C84, kRaceEnd},    {0x82262678, "RACE_WIN"},
     {0x822626B0, "RACE_LOSE"},
 };
 
@@ -231,6 +240,7 @@ std::unique_ptr<audio::music::Track> Open(const audio::music::Choice& choice) {
     return nullptr;
   }
   track->SetRegion(choice.loop_in, choice.loop_out);
+  track->SetGain(choice.gain);
   return track;
 }
 
@@ -277,6 +287,9 @@ uint32_t Choose(uint8_t* base, uint32_t from, const std::string& bank) {
   g_category.clear();
   g_menu_bank = false;
   const char* category = CategoryOf(from);
+  if (category && std::strcmp(category, kRaceEnd) == 0) {
+    category = audio::music::SameName(bank, "bgm_tmp_14") ? "RACE_WIN" : "RACE_LOSE";
+  }
   if (!category) {
     REXLOG_INFO("custom_music: {} (from {:08X}): not a category; the game's", bank, from);
     return 0;
@@ -420,7 +433,7 @@ void SetGameDataRoot(const std::filesystem::path& root) {
                        break;
                    }
                  },
-                 ValidGame);
+                 ValidGame, REXCVAR_GET(custom_music_adaptive_volume));
 }
 
 std::unique_ptr<audio::music::Track> TakeTrack(uint32_t input, const uint8_t* data, uint32_t size,

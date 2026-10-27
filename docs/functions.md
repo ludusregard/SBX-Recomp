@@ -315,7 +315,7 @@ Integer frame counts (for example `cmpwi r11,60`) aren't included.
 
 A true tick rate upgrade: all game logic at 60 ticks a second. Parked: the
 game keeps its 30 Hz tick (see "Subtick"), as the original replays depend
-on it. The two switches below (`src/tick_rate/tick_rate.cpp`, both off by default) were removed on 2026-10-25 with the code (`src/tick_rate/` is to be deleted by hand); the findings are kept:
+on it. The two switches below (`src/tick_rate/tick_rate.cpp`, both off by default) were removed on 2026-10-25 with the code (`cull_emulated_build.ps1` deletes `src/tick_rate/`); the findings are kept:
 
 - `--tick_rate_60`: the present interval is 1 vblank instead of 2
   (`sub_82573100`), so the main loop and all game logic run 60 times a

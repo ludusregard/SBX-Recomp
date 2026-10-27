@@ -20,7 +20,7 @@
 #include "subtick/game_messages.h"
 #include "subtick/input.h"
 
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
 #include "native/renderer.h"
 #endif
 
@@ -75,12 +75,12 @@ void PaceNextPass(PPCContext& ctx, uint8_t* base) {
 // (whether a logic pass recorded it).
 extern "C" REX_FUNC(sub_82092E60) {
   REX_FUNC_PROLOGUE();
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
   native::Renderer_OnListHandedOver(!subtick::GameMessages_IsRenderOnlyPass());
 #endif
   __imp__sub_82092E60(ctx, base);
   if (!REXCVAR_GET(subtick)) {
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
     subtick::GameMessages_OnPassFinished();  // tells when a race ends
 #endif
     return;
@@ -93,7 +93,7 @@ extern "C" REX_FUNC(sub_82092E60) {
 // Renderer::DrawFrame (render thread): r3 = renderer. With the native
 // renderer, each frame's replay is framed for it (Renderer_OnReplayStart,
 // Renderer_EndFrame), as ITC-Recomp's render thread loop does.
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
 extern "C" REX_FUNC(sub_82091FB0) {
   REX_FUNC_PROLOGUE();
   native::Renderer_OnReplayStart();
@@ -102,29 +102,19 @@ extern "C" REX_FUNC(sub_82091FB0) {
 }
 #endif
 
-// VideoOutput::WaitForVblank: r3 = the video output. With --subtick (and
-// always with the native renderer, where no emulated GPU sends vblanks),
-// keeps the graphics device call that precedes the wait and drops the wait
-// itself, which held each frame for the game's 2-vblank interval.
+// VideoOutput::WaitForVblank: r3 = the video output. The native renderer gets
+// no vblanks, so this keeps the graphics device call that precedes the wait
+// and drops the wait itself, which held each frame for the game's 2-vblank
+// interval.
 extern "C" REX_FUNC(sub_82573638) {
   REX_FUNC_PROLOGUE();
-#ifdef SBX_NATIVE_RENDERER
-  constexpr bool kNative = true;
-#else
-  constexpr bool kNative = false;
-#endif
   bool skip_wait = hooks::TitleScreen_SkipTickWait();
-  if (!kNative && !REXCVAR_GET(subtick) && !skip_wait) {
-    __imp__sub_82573638(ctx, base);
-    return;
-  }
   ctx.r3.u64 = guest::LoadU32(base, ctx.r3.u32 + kVideoOutputDeviceOffset);
   sub_8229DD58(ctx, base);
-  // The native renderer without --subtick: no vblanks arrive and the pacer
-  // isn't running (PaceNextPass), so hold the game's 30 Hz here instead of
-  // the 2-vblank wait. Without it every pass ran at once, as fast as the CPU
-  // allowed.
-  if (kNative && !REXCVAR_GET(subtick) && !skip_wait) {
+  // Without --subtick the pacer isn't running (PaceNextPass), so hold the
+  // game's 30 Hz here instead of the 2-vblank wait. Without it every pass ran
+  // at once, as fast as the CPU allowed.
+  if (!REXCVAR_GET(subtick) && !skip_wait) {
     subtick::FramePacer& pacer = subtick::GetFramePacer();
     pacer.WaitForNextTick();
     pacer.OnTickReleased();

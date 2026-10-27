@@ -8,9 +8,9 @@ project(sbx LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Native Vulkan renderer (src/native/, from ITC-Recomp; work in progress, see
-# docs/native-renderer-port.md). Off by default: the emulated GPU draws.
-option(SBX_NATIVE_RENDERER "Native Vulkan renderer (work in progress)" OFF)
+# The native Vulkan renderer (src/native/, from ITC-Recomp; see
+# docs/native-renderer-port.md) is the only renderer. The emulated GPU build
+# (build.bat, run.bat) and the SDK's Xenos plugin are gone.
 
 # Apply this project's patches to the rexglue-sdk submodule, skipping any
 # already applied. See patches/rexglue-sdk/ for what each one works around.
@@ -58,14 +58,14 @@ if(WIN32 AND SBX_WIN_LTO)
     add_link_options(-flto=thin "LINKER:/lldltocache:${CMAKE_BINARY_DIR}/thinlto-cache")
 endif()
 
-# The SDL patches (patches/rexglue-sdk-native/), applied in both builds, each
-# skipped if already applied: SDL as a DLL on Windows, so the game and
+# The SDL patches (patches/rexglue-sdk-vulkan/), each skipped if already
+# applied: SDL as a DLL on Windows, so the game and
 # rexruntime.dll share one SDL (our audio output, src/audio/, and the native
 # renderer call it), with SDL's Vulkan support on.
 if(REXSDK_DIR)
-    file(GLOB SBX_NATIVE_SDK_PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/../patches/rexglue-sdk-native/*.patch")
-    list(SORT SBX_NATIVE_SDK_PATCHES)
-    foreach(patch IN LISTS SBX_NATIVE_SDK_PATCHES)
+    file(GLOB SBX_VULKAN_SDK_PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/../patches/rexglue-sdk-vulkan/*.patch")
+    list(SORT SBX_VULKAN_SDK_PATCHES)
+    foreach(patch IN LISTS SBX_VULKAN_SDK_PATCHES)
         execute_process(
             COMMAND git -C "${REXSDK_DIR}" apply --reverse --check "${patch}"
             RESULT_VARIABLE already_applied OUTPUT_QUIET ERROR_QUIET)
@@ -83,12 +83,9 @@ endif()
 
 # The native renderer and the shader translator need the SDK's Vulkan
 # headers, which a D3D12 build leaves out (the SDK defaults to D3D12 on
-# Windows). Forced while the option is on; with it off again, delete the
-# build folder to go back to the SDK's defaults.
-if(SBX_NATIVE_RENDERER)
-    set(REXGLUE_USE_VULKAN ON CACHE BOOL "" FORCE)
-    set(REXGLUE_USE_D3D12 OFF CACHE BOOL "" FORCE)
-endif()
+# Windows), so the build is Vulkan only.
+set(REXGLUE_USE_VULKAN ON CACHE BOOL "" FORCE)
+set(REXGLUE_USE_D3D12 OFF CACHE BOOL "" FORCE)
 
 include(generated/rexglue.cmake)
 
@@ -105,7 +102,6 @@ set(SBX_SOURCES
     src/hooks/patch_loader.cpp
     src/hooks/post_effects.cpp
     src/hooks/post_race.cpp
-    src/hooks/shader_compiles.cpp
     src/hooks/title_screen.cpp
     src/hooks/unlock_cut_cars.cpp
     src/hooks/voice.cpp
@@ -119,28 +115,26 @@ set(SBX_SOURCES
     src/subtick/renderer_hooks.cpp
     src/resources/app.rc
 )
-if(SBX_NATIVE_RENDERER)
-    list(APPEND SBX_SOURCES
-        src/base/log.cpp
-        src/base/log_sdk.cpp
-        src/helpers/executable.cpp
-        src/native/app_window.cpp
-        src/native/buffers.cpp
-        src/native/disk_cache.cpp
-        src/native/draw_packets.cpp
-        src/native/gpu_link.cpp
-        src/native/overlay.cpp
-        src/native/passes.cpp
-        src/native/renderer.cpp
-        src/native/replay_hooks.cpp
-        src/native/shaders.cpp
-        src/native/state.cpp
-        src/native/textures.cpp
-        src/native/vulkan_functions.cpp
-        src/movies/movie.cpp
-        src/hooks/movies.cpp
-    )
-endif()
+list(APPEND SBX_SOURCES
+    src/base/log.cpp
+    src/base/log_sdk.cpp
+    src/helpers/executable.cpp
+    src/native/app_window.cpp
+    src/native/buffers.cpp
+    src/native/disk_cache.cpp
+    src/native/draw_packets.cpp
+    src/native/gpu_link.cpp
+    src/native/overlay.cpp
+    src/native/passes.cpp
+    src/native/renderer.cpp
+    src/native/replay_hooks.cpp
+    src/native/shaders.cpp
+    src/native/state.cpp
+    src/native/textures.cpp
+    src/native/vulkan_functions.cpp
+    src/movies/movie.cpp
+    src/hooks/movies.cpp
+)
 # Hooks in src/hooks/ override generated functions (docs/functions.md).
 
 if(WIN32)
@@ -149,10 +143,8 @@ else()
     add_executable(sbx ${SBX_SOURCES})
 endif()
 
-# The emulated GPU (the xenos plugin, loaded with --gpu_plugin=xenos). Still
-# built with the native renderer, for comparisons; leave --gpu_plugin unset
-# to run the native renderer alone.
-rexglue_setup_target(sbx GPU_PLUGINS xenos)
+# No GPU plugin: the native renderer replaces the SDK's Xenos plugin.
+rexglue_setup_target(sbx)
 
 target_include_directories(sbx PRIVATE src)
 
@@ -177,65 +169,62 @@ target_include_directories(sbx_music PUBLIC src)
 target_link_libraries(sbx_music PRIVATE sbx_avformat sbx_swresample)
 target_link_libraries(sbx PRIVATE sbx_music)
 
-if(SBX_NATIVE_RENDERER)
-    # The SDK's Xenos shader translator (to SPIR-V), built into our binary for
-    # the native renderer, as in ITC-Recomp (the plugin has its own copy with
-    # hidden symbols).
-    set(SBX_SDK_GRAPHICS ${REXSDK_DIR}/src/graphics)
-    add_library(sbx_xenos_shaders STATIC
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/shader.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/translator.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/translator_disasm.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_builder.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_alu.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_fetch.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_memexport.cpp
-        ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_rb.cpp
-        ${SBX_SDK_GRAPHICS}/format/ucode.cpp
-        ${SBX_SDK_GRAPHICS}/util/draw.cpp
-        ${SBX_SDK_GRAPHICS}/registers.cpp
-        ${SBX_SDK_GRAPHICS}/register_file.cpp
-    )
-    target_include_directories(sbx_xenos_shaders PUBLIC ${REXSDK_DIR}/thirdparty/renderdoc)
-    set_target_properties(sbx_xenos_shaders PROPERTIES
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON)
-    target_compile_options(sbx_xenos_shaders PRIVATE -Wno-unused-variable)
-    target_link_libraries(sbx_xenos_shaders PUBLIC
-        rex::runtime xxHash::xxhash Vulkan::Headers glslang::SPIRV glslang
-        MachineIndependent GenericCodeGen OSDependent OGLCompiler)
+# The SDK's Xenos shader translator (to SPIR-V), built into our binary for
+# the native renderer, as in ITC-Recomp.
+set(SBX_SDK_GRAPHICS ${REXSDK_DIR}/src/graphics)
+add_library(sbx_xenos_shaders STATIC
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/shader.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/translator.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/translator_disasm.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_builder.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_alu.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_fetch.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_memexport.cpp
+    ${SBX_SDK_GRAPHICS}/pipeline/shader/spirv_translator_rb.cpp
+    ${SBX_SDK_GRAPHICS}/format/ucode.cpp
+    ${SBX_SDK_GRAPHICS}/util/draw.cpp
+    ${SBX_SDK_GRAPHICS}/registers.cpp
+    ${SBX_SDK_GRAPHICS}/register_file.cpp
+)
+target_include_directories(sbx_xenos_shaders PUBLIC ${REXSDK_DIR}/thirdparty/renderdoc)
+set_target_properties(sbx_xenos_shaders PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+target_compile_options(sbx_xenos_shaders PRIVATE -Wno-unused-variable)
+target_link_libraries(sbx_xenos_shaders PUBLIC
+    rex::runtime xxHash::xxhash Vulkan::Headers glslang::SPIRV glslang
+    MachineIndependent GenericCodeGen OSDependent OGLCompiler)
 
-    target_link_libraries(sbx PRIVATE sbx_xenos_shaders)
+target_link_libraries(sbx PRIVATE sbx_xenos_shaders)
 
-    # The movies played through our own FFmpeg (src/movies/, from ITC-Recomp;
-    # its docs/native-movies.md). The player is its own library, as ITC's
-    # itc_movies, so only it sees FFmpeg's headers.
-    add_library(sbx_movies STATIC src/movies/player.cpp)
-    target_include_directories(sbx_movies PUBLIC src)
-    target_link_libraries(sbx_movies PRIVATE sbx_avformat)
-    target_link_libraries(sbx PRIVATE sbx_movies)
-    target_compile_definitions(sbx PRIVATE SBX_NATIVE_RENDERER=1)
-    # Vulkan (loaded at runtime): headers only, the SDK's third-party copy;
-    # xxHash header-only for src/base/hash.h.
-    target_include_directories(sbx PRIVATE
-        ${REXSDK_DIR}/thirdparty/vulkan-headers/include
-        ${REXSDK_DIR}/thirdparty/xxHash)
+# The movies played through our own FFmpeg (src/movies/, from ITC-Recomp;
+# its docs/native-movies.md). The player is its own library, as ITC's
+# itc_movies, so only it sees FFmpeg's headers.
+add_library(sbx_movies STATIC src/movies/player.cpp)
+target_include_directories(sbx_movies PUBLIC src)
+target_link_libraries(sbx_movies PRIVATE sbx_avformat)
+target_link_libraries(sbx PRIVATE sbx_movies)
+target_compile_definitions(sbx PRIVATE SBX_VULKAN_RENDERER=1)
+# Vulkan (loaded at runtime): headers only, the SDK's third-party copy;
+# xxHash header-only for src/base/hash.h.
+target_include_directories(sbx PRIVATE
+    ${REXSDK_DIR}/thirdparty/vulkan-headers/include
+    ${REXSDK_DIR}/thirdparty/xxHash)
 
-    # The overlay's ImGui back-ends (src/native/overlay.cpp): SDL3 and
-    # Vulkan, from the SDK's ImGui checkout. ImGui itself is the SDK's, in
-    # rexruntime (all its symbols exported); Vulkan is loaded at runtime, so
-    # the Vulkan back-end takes its functions from us (no prototypes).
-    set(SBX_IMGUI_BACKENDS
-        ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_sdl3.cpp
-        ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_vulkan.cpp)
-    target_sources(sbx PRIVATE ${SBX_IMGUI_BACKENDS})
-    set_source_files_properties(${SBX_IMGUI_BACKENDS} PROPERTIES
-        COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-        COMPILE_OPTIONS -w)
-    target_include_directories(sbx PRIVATE ${REXSDK_DIR}/thirdparty/imgui/backends)
-endif()
+# The overlay's ImGui back-ends (src/native/overlay.cpp): SDL3 and
+# Vulkan, from the SDK's ImGui checkout. ImGui itself is the SDK's, in
+# rexruntime (all its symbols exported); Vulkan is loaded at runtime, so
+# the Vulkan back-end takes its functions from us (no prototypes).
+set(SBX_IMGUI_BACKENDS
+    ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_sdl3.cpp
+    ${REXSDK_DIR}/thirdparty/imgui/backends/imgui_impl_vulkan.cpp)
+target_sources(sbx PRIVATE ${SBX_IMGUI_BACKENDS})
+set_source_files_properties(${SBX_IMGUI_BACKENDS} PROPERTIES
+    COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+    COMPILE_OPTIONS -w)
+target_include_directories(sbx PRIVATE ${REXSDK_DIR}/thirdparty/imgui/backends)
 
 # SDL (SDL3.dll, shared with rexruntime): the SDK's headers, for our audio
 # output (src/audio/) and the native renderer.

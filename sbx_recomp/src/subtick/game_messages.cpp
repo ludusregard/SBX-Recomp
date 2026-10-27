@@ -6,7 +6,7 @@
 #include "subtick/car_transforms.h"
 #include "subtick/per_frame_logic.h"
 
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
 #include "native/textures.h"
 #endif
 
@@ -143,7 +143,7 @@ void GameMessages_OnPassFinished() {
   }
   // The pass that just ran was a logic pass: it decides whether we're in a
   // race.
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
   if (g_in_race && !g_race_draw_step_seen) {
     native::TextureCache_RaceLeft();  // frees the race's textures
   }

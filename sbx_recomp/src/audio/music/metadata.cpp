@@ -334,6 +334,13 @@ std::optional<Metadata> ParseMetadata(std::string_view text, std::string* error,
           return std::nullopt;
         }
         t.weight = *v;
+      } else if (SameName(a.name, "Volume")) {
+        auto v = Number(a.value);
+        if (!v || *v < 0 || *v > 2) {
+          *error = At(e.line) + "Volume must be a number from 0 to 2, not \"" + a.value + "\"";
+          return std::nullopt;
+        }
+        t.volume = *v;
       } else if (SameName(a.name, "LoopIn") || SameName(a.name, "LoopOut")) {
         auto v = Number(a.value);
         if (!v || *v < 0) {

@@ -29,7 +29,8 @@ Built with assistance of Claude with manual review and testing.
 
 ## Install
 
-Not packaged yet; build it from source (below). The game's files go in
+Build it from source (below), or run `sbx_recomp\package_release.bat` to make
+`release\sbx-vulkan.zip`: the program only, with no game files. The game's files go in
 `assets/` (`default.xex` and `DATA/`); `assets/PATCH_DATA/` (replacements)
 and `assets/ADDON_DATA/` (new content, not used yet) are part of this repo.
 
@@ -37,10 +38,10 @@ and `assets/ADDON_DATA/` (new content, not used yet) are part of this repo.
 
 | Command | What it does |
 |---|---|
-| `run.bat` | The game, on the emulated Xbox 360 GPU. |
-| `run-debug.bat` | The same, with debug logging (written to `logs/`). |
+| `run_vulkan.bat` | The game, on the native Vulkan renderer. |
+| `run_vulkan.bat --log_level=debug` | The same, with debug logging (written to `logs/`). |
 
-Options can be added after either, e.g. `run.bat --fullscreen=true`.
+Options can be added after either, e.g. `run_vulkan.bat --fullscreen=true`.
 
 ## Known limitations
 
@@ -50,7 +51,7 @@ Options can be added after either, e.g. `run.bat --fullscreen=true`.
 
 ## Reporting problems
 
-Play with `run-debug.bat`, then open an issue describing what you saw, and
+Play with `run_vulkan.bat --log_level=debug`, then open an issue describing what you saw, and
 attach the newest file from the `logs` folder.
 
 ## Building from source
@@ -62,13 +63,13 @@ or newer), Ninja, Python 3 and the Vulkan SDK.
 python sbx_recomp\tools\fix_symlink_stubs.py
 cd sbx_recomp
 codegen.bat
-build.bat
-run.bat
+build_vulkan.bat
+run_vulkan.bat
 ```
 
 Clone with its submodules. `fix_symlink_stubs.py` replaces the SDK's
 symlink stubs with real files (git on Windows checks symlinks out as text
-files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo/sbx.exe`.
+files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo-vulkan/sbx.exe`.
 
 ## Documentation (This is written by LLMs primarily for LLMs)
 

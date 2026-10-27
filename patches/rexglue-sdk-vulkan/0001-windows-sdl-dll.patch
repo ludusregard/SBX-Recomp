@@ -7,10 +7,10 @@ diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
  set(SDL_INSTALL ON CACHE BOOL "" FORCE)
 -set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 -set(SDL_STATIC ON CACHE BOOL "" FORCE)
-+# SBX (patches/rexglue-sdk-native/0001-windows-sdl-dll.patch, from
++# SBX (patches/rexglue-sdk-vulkan/0001-windows-sdl-dll.patch, from
 +# ITC-Recomp): on Windows, SDL is a DLL, so the game and rexruntime.dll share
 +# one SDL (a static SDL is linked into each, as a DLL only exports its own
-+# code). Applied with the native renderer (SBX_NATIVE_RENDERER).
++# code). Needed by the native renderer and our audio output.
 +if(WIN32)
 +    set(SDL_SHARED ON CACHE BOOL "" FORCE)
 +    set(SDL_STATIC OFF CACHE BOOL "" FORCE)

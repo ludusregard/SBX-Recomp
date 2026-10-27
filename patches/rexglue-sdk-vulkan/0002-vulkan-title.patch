@@ -1,0 +1,17 @@
+diff --git a/include/rex/version.h.in b/include/rex/version.h.in
+--- a/include/rex/version.h.in
++++ b/include/rex/version.h.in
+@@ -13,10 +13,9 @@
+ #define REXGLUE_BUILD_PLATFORM "@REX_PLATFORM@"
+ #define REXGLUE_BUILD_TIMESTAMP "@REXGLUE_BUILD_TIMESTAMP@"
+ 
+-// Requires REXGLUE_BUILD_CONFIG compile definition
+-// Title: "[rexglue-v0.7.5.38-dev.gb27f3f74-Release]"
+-#define REXGLUE_BUILD_TITLE \
+-  "[rexglue-v" REXGLUE_VERSION_STRING "-" REXGLUE_BUILD_CONFIG "]"
++// SBX (patches/rexglue-sdk-vulkan/0002-vulkan-title.patch): the title is
++// fixed, not built from the version.
++#define REXGLUE_BUILD_TITLE "v0.5.0 Vulkan"
+ 
+ // Overlay: "build: rexglue-v0.7.5.38-dev.gb27f3f74-win-amd64-Release@20260420_1430"
+ #define REXGLUE_BUILD_STAMP \

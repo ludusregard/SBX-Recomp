@@ -24,6 +24,9 @@ struct Choice {
   std::string name;  // the file's name, UTF-8, for messages
   // The loop region in seconds; 0 and 0: the whole track.
   double loop_in = 0, loop_out = 0;
+  // The factor the track plays at: its Volume, times with adaptive volume
+  // the gain that brings its loudness up or down to the game's (1: as it is).
+  double gain = 1;
 };
 
 // Who plays in the place of a blocked game song: one of the folder's tracks,
@@ -43,8 +46,11 @@ class Library {
   // Scans `root` (the CUSTOM_MUSIC folder) for the folders named in
   // `categories` (matched ignoring case). Missing folders are fine; other
   // folders are reported. Each file is opened once to check it (Track::Probe).
+  // With `adaptive_volume`, each is also decoded once for its loudness
+  // (Track::Measure), which takes a moment per file at start-up; the gain is
+  // then fixed.
   void Scan(const std::filesystem::path& root, const std::vector<std::string>& categories,
-            const Log& log, const ValidGame& valid_game);
+            const Log& log, const ValidGame& valid_game, bool adaptive_volume);
 
   // The chance a track start in `category` plays a custom track: the
   // folder's ReplaceChance, else `fallback`; 0 when it has nothing to pick.

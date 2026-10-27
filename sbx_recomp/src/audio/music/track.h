@@ -46,9 +46,26 @@ class Track {
   // Opens `path` and its decoder; nullptr (and why, in `error`) on failure.
   static std::unique_ptr<Track> Open(const std::filesystem::path& path, std::string* error);
 
+  // How loud a file is, found by decoding all of it at its own rate and
+  // channels: lufs is its integrated loudness (ITU-R BS.1770, gated), peak_db
+  // its sample peak (0 is full scale). -200 for either when there's nothing
+  // to measure (silence, or under 400 ms). nullopt (and why, in `error`) if
+  // the file can't be decoded.
+  struct Loudness {
+    double lufs = -200;
+    double peak_db = -200;
+  };
+  static std::optional<Loudness> Measure(const std::filesystem::path& path, std::string* error);
+
   // Sets the output format (the voice's) and decodes the first `ahead`
   // samples. False if the resampler can't be made.
   bool Begin(uint32_t sample_rate, uint32_t channels, uint32_t ahead);
+
+  // The level the samples are output at, as a factor (1: as decoded, the
+  // default). Set before Begin; the level comes out of the samples as they
+  // are converted, so a shuffle's next track keeps its own.
+  void SetGain(double gain) { gain_ = gain; }
+  double gain() const { return gain_; }
 
   // The loop region, in seconds from the track's start; `end` 0 or past the
   // track's end means the track's end. Without one, the whole track loops.
@@ -121,6 +138,7 @@ class Track {
   uint32_t loop_end_ = UINT32_MAX;  // UINT32_MAX: the track's end
   uint32_t loops_left_ = 0;
   bool shuffle_ = false;
+  double gain_ = 1.0;
   std::unique_ptr<Track> next_;
 };
 

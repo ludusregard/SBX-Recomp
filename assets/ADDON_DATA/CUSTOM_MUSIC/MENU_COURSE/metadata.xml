@@ -1,21 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  MENU_COURSE: see ../CUSTOM_MUSIC_README.md.
-
-  The game's own songs here. The game picks as it always does; a song with
-  Weight="0" is blocked: when the game picks it, another song from this
-  folder plays instead, by weight (one of the game songs listed here, or
-  one of your tracks).
-
-  The four menu songs share one bank, so only this folder's own song
-  (BGM_SYSTEM) can be listed, and a blocked one can only give way to your
-  tracks here. With no tracks here, it plays anyway.
-
-  Your tracks: <Track File="name.ogg" Weight="1"/>. Music files in this
-  folder that aren't listed play at weight 1. Optional: LoopIn and LoopOut
-  (seconds) for a loop region (used only when shuffle is turned off),
-  and ReplaceChance="0.5" on <Music> for this folder's chance.
--->
+<!-- MENU_COURSE: see ../CUSTOM_MUSIC_README.md -->
 <Music Category="MENU_COURSE">
   <Game Name="BGM_SYSTEM" Weight="1"/>  <!-- the course select song -->
+  <Track File="DEAD ON - DEAD ON (2023 Mix).opus" Weight="1"/>
 </Music>

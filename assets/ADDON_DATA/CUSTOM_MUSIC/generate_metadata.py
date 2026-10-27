@@ -7,8 +7,10 @@ Put this script in the CUSTOM_MUSIC folder and run it:
 
 It walks CUSTOM_MUSIC and its subfolders. For each folder with music files:
 
-- If the folder has a metadata.xml, any music file it doesn't list yet is
-  added as <Track File="..." Weight="1"/>. Nothing else in the file changes.
+- If the folder has a metadata.xml, the file is kept as it is except:
+  any music file it doesn't list yet is appended as <Track File="..."
+  Weight="1"/>, and any <Track> whose file is no longer in the folder is
+  commented out (so its weight and loop points are kept, just switched off).
 - If not, a new metadata.xml is written: the game's own songs for that
   folder (category folders only) and every music file, all at weight 1.
 
@@ -27,7 +29,7 @@ import os
 import re
 import sys
 import xml.etree.ElementTree as ET
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import quoteattr, unescape
 
 MUSIC_EXTENSIONS = {".ogg", ".oga", ".opus", ".flac", ".mp3", ".wav"}
 METADATA_NAME = "metadata.xml"
@@ -64,29 +66,6 @@ GAME_SONGS = {
     "MENU_STORY": [("BGM_SYSTEM", "the story dialog song")],
 }
 
-HELP_GAME = """\
-  The game's own songs here. The game picks as it always does; a song with
-  Weight="0" is blocked: when the game picks it, another song from this
-  folder plays instead, by weight (one of the game songs listed here, or
-  one of your tracks)."""
-
-HELP_GAME_EXTRA = """\
-  Any of bgm_tmp_01 to bgm_tmp_17 can be listed, including 02, 04, 12 and
-  13, which the game never plays on its own (they can play only as a stand-in
-  for a blocked song)."""
-
-HELP_MENU = """\
-  The four menu songs share one bank, so only this folder's own song
-  (BGM_SYSTEM) can be listed, and a blocked one can only give way to your
-  tracks here. With no tracks here, it plays anyway."""
-
-HELP_TRACKS = """\
-  Your tracks: <Track File="name.ogg" Weight="1"/>. Music files in this
-  folder that aren't listed play at weight 1. Optional: LoopIn and LoopOut
-  (seconds) for a loop region (used only when shuffle is turned off),
-  and ReplaceChance="0.5" on <Music> for this folder's chance."""
-
-
 def music_files(names):
     found = [n for n in names if os.path.splitext(n)[1].lower() in MUSIC_EXTENSIONS]
     return sorted(found, key=lambda n: (n.lower(), n))
@@ -99,17 +78,9 @@ def track_line(name):
 def build_xml(category, tracks):
     """A new metadata.xml. `category` is None for folders that aren't one."""
     songs = GAME_SONGS.get(category.upper()) if category else None
-    lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<!--"]
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>']
     if category:
-        lines.append(f"  {category.upper()}: see ../CUSTOM_MUSIC_README.md.")
-        lines.append("")
-    if songs:
-        lines.append(HELP_GAME)
-        lines.append("")
-        lines.append(HELP_MENU if category.upper().startswith("MENU_") else HELP_GAME_EXTRA)
-        lines.append("")
-    lines.append(HELP_TRACKS)
-    lines.append("-->")
+        lines.append(f"<!-- {category.upper()}: see ../CUSTOM_MUSIC_README.md -->")
     attrs = f" Category={quoteattr(category)}" if category else ""
     lines.append(f"<Music{attrs}>")
     for name, where in songs or []:
@@ -118,6 +89,39 @@ def build_xml(category, tracks):
         lines.append(track_line(name))
     lines.append("</Music>")
     return "\r\n".join(lines) + "\r\n"
+
+
+# A <Track> start tag (its quoted attribute values may hold '>'), and comments.
+TRACK_TAG = re.compile(r"<Track\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", re.IGNORECASE)
+FILE_ATTR = re.compile(r"""\bFile\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def comment_out_missing(text, present):
+    """`text` with each self-closing <Track> whose File isn't in `present`
+    (lower-case names) commented out. Everything else is left as it is.
+    Returns the text and the names commented out."""
+    comments = [m.span() for m in COMMENT.finditer(text)]
+    edits, gone = [], []
+    for m in TRACK_TAG.finditer(text):
+        if any(s <= m.start() < e for s, e in comments):
+            continue  # already commented out
+        tag = m.group(0)
+        if not tag.endswith("/>"):
+            continue  # an open and close pair: left for the author
+        f = FILE_ATTR.search(tag)
+        if not f:
+            continue
+        name = unescape(f.group(1) if f.group(1) is not None else f.group(2),
+                        {"&quot;": '"', "&apos;": "'"})
+        if name.lower() in present:
+            continue
+        edits.append((m.start(), m.end(), name))
+        gone.append(name)
+    for start, end, name in reversed(edits):
+        tag = text[start:end].replace("--", "- -")
+        text = text[:start] + f"<!-- {tag} (no such file in this folder) -->" + text[end:]
+    return text, gone
 
 
 def listed_files(text):
@@ -178,19 +182,24 @@ def main():
         category = os.path.basename(folder) if is_category else None
 
         if exists and not args.force:
-            if not tracks:
-                continue
             with open(target, encoding="utf-8-sig", newline="") as f:
                 text = f.read()
             try:
+                present = {t.lower() for t in tracks}
+                text, gone = comment_out_missing(text, present)
                 new = [t for t in tracks if t.lower() not in listed_files(text)]
-                if not new:
+                if not new and not gone:
                     continue
-                text = add_tracks(text, new)
+                text = add_tracks(text, new) if new else text
             except (ET.ParseError, ValueError) as e:
                 print(f"skipped  {rel}: its {METADATA_NAME} can't be read ({e})")
                 continue
-            verb, done, detail = "add", "added", f"{len(new)} track(s)"
+            parts = []
+            if new:
+                parts.append(f"added {len(new)} track(s)")
+            if gone:
+                parts.append(f"commented out {len(gone)} missing track(s): " + ", ".join(gone))
+            verb, done, detail = "update", "updated", "; ".join(parts)
         else:
             if not tracks and not (category and category.upper() in GAME_SONGS):
                 continue

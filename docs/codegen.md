@@ -92,8 +92,8 @@ tools need the decrypted copy, `default.xex.decrypt`.
   real files over the stubs and marks them assume-unchanged. Rerun it after
   re-cloning or updating the submodule. The other symlinks (MoltenVK) are
   only used on macOS.
-- **Logs.** `codegen.bat` and `build.bat` log everything to
-  `out\codegen.log` / `out\build.log` and stop with the window open on a
+- **Logs.** `codegen.bat` and `build_vulkan.bat` log everything to
+  `out\codegen.log` / `out\build_vulkan.log` and stop with the window open on a
   failure.
 - Known to work (2026-10-17): clang 22.1.7 targeting MSVC 19.51, CMake
   4.3.3, Ninja. The SDK's own CI uses older clang, so new-compiler errors

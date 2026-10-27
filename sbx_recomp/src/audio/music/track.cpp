@@ -12,6 +12,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -70,6 +71,17 @@ std::string ErrorText(int error) {
   char text[AV_ERROR_MAX_STRING_SIZE] = {};
   av_strerror(error, text, sizeof(text));
   return text;
+}
+
+// A boosted sample above 0.9 of full scale bends smoothly toward full scale
+// (tanh), so a loud part rounds off instead of clipping flat.
+double SoftClip(double x) {
+  constexpr double kKnee = 0.9;
+  const double a = std::fabs(x);
+  if (a <= kKnee) {
+    return x;
+  }
+  return std::copysign(kKnee + (1.0 - kKnee) * std::tanh((a - kKnee) / (1.0 - kKnee)), x);
 }
 
 uint32_t Samples(double seconds, uint32_t rate) {
@@ -216,6 +228,139 @@ bool Track::Begin(uint32_t sample_rate, uint32_t channels, uint32_t ahead) {
   return !failed_;
 }
 
+namespace {
+
+// BS.1770's two filters for a sample rate, as libebur128 designs them: a
+// high shelf (the head's effect) and then a high-pass (the RLB curve). Each
+// is a biquad in direct form: y = b0 x + b1 x1 + b2 x2 - a1 y1 - a2 y2.
+struct Biquad {
+  double b0, b1, b2, a1, a2;
+  double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  double Run(double x) {
+    const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1;
+    x1 = x;
+    y2 = y1;
+    y1 = y;
+    return y;
+  }
+};
+
+struct KWeighting {
+  Biquad shelf, rlb;
+};
+
+KWeighting MakeKWeighting(double rate) {
+  constexpr double kPi = 3.14159265358979323846;
+  KWeighting k;
+  {
+    const double f0 = 1681.974450955533, gain_db = 3.999843853973347, q = 0.7071752369554196;
+    const double K = std::tan(kPi * f0 / rate);
+    const double Vh = std::pow(10.0, gain_db / 20.0);
+    const double Vb = std::pow(Vh, 0.4996667741545416);
+    const double a0 = 1.0 + K / q + K * K;
+    k.shelf = {(Vh + Vb * K / q + K * K) / a0, 2.0 * (K * K - Vh) / a0,
+               (Vh - Vb * K / q + K * K) / a0, 2.0 * (K * K - 1.0) / a0,
+               (1.0 - K / q + K * K) / a0};
+  }
+  {
+    const double f0 = 38.13547087602444, q = 0.5003270373238773;
+    const double K = std::tan(kPi * f0 / rate);
+    const double a0 = 1.0 + K / q + K * K;
+    k.rlb = {1.0 / a0, -2.0 / a0, 1.0 / a0, 2.0 * (K * K - 1.0) / a0,
+             (1.0 - K / q + K * K) / a0};
+  }
+  return k;
+}
+
+// The loudness of a mean square (BS.1770: -0.691 dB offset, weights 1).
+double Lufs(double mean_square) {
+  return -0.691 + 10.0 * std::log10(mean_square);
+}
+
+}  // namespace
+
+std::optional<Track::Loudness> Track::Measure(const std::filesystem::path& path,
+                                              std::string* error) {
+  auto track = Open(path, error);
+  if (!track) {
+    return std::nullopt;
+  }
+  Impl& d = *track->impl_;
+  const uint32_t rate = uint32_t(std::max(d.codec->sample_rate, 0));
+  const uint32_t channels = uint32_t(std::max(d.codec->ch_layout.nb_channels, 0));
+  if (!track->Begin(rate, channels, 0)) {
+    *error = "can't be decoded";
+    return std::nullopt;
+  }
+  track->DecodeAhead(UINT32_MAX);  // all of it: the decoder stops at the end
+  if (track->failed_) {
+    *error = "can't be decoded";
+    return std::nullopt;
+  }
+
+  // The filtered mean square of each 100 ms, all channels summed (weight 1
+  // each), for the gated blocks below. A block is four of them: 400 ms.
+  const uint32_t hop = rate / 10;
+  std::vector<KWeighting> filters(channels, MakeKWeighting(rate));
+  std::vector<double> chunks;
+  double chunk_sum = 0;
+  uint32_t in_chunk = 0;
+  int peak = 0;
+  const uint8_t* p = track->pcm_.data();
+  const size_t frames = track->pcm_.size() / (2 * channels);
+  for (size_t i = 0; i < frames; i++) {
+    for (uint32_t c = 0; c < channels; c++) {
+      const int v = int16_t(uint16_t((p[0] << 8) | p[1]));
+      p += 2;
+      peak = std::max(peak, std::abs(v));
+      const double y = filters[c].rlb.Run(filters[c].shelf.Run(v / 32768.0));
+      chunk_sum += y * y;
+    }
+    if (++in_chunk == hop) {
+      chunks.push_back(chunk_sum);
+      chunk_sum = 0;
+      in_chunk = 0;
+    }
+  }
+
+  Loudness out;
+  out.peak_db = peak ? 20.0 * std::log10(peak / 32767.0) : -200.0;
+  if (chunks.size() < 4) {
+    return out;
+  }
+  // Blocks of 400 ms, 100 ms apart: the absolute gate (-70 LUFS), then the
+  // relative one (10 LU under the average of what passed it).
+  const size_t blocks = chunks.size() - 3;
+  auto block = [&](size_t j) {
+    return (chunks[j] + chunks[j + 1] + chunks[j + 2] + chunks[j + 3]) / (4.0 * hop);
+  };
+  double sum = 0;
+  size_t count = 0;
+  for (size_t j = 0; j < blocks; j++) {
+    if (Lufs(block(j)) > -70.0) {
+      sum += block(j);
+      count++;
+    }
+  }
+  if (count == 0) {
+    return out;
+  }
+  const double relative_gate = Lufs(sum / count) - 10.0;
+  sum = 0;
+  count = 0;
+  for (size_t j = 0; j < blocks; j++) {
+    if (Lufs(block(j)) > -70.0 && Lufs(block(j)) > relative_gate) {
+      sum += block(j);
+      count++;
+    }
+  }
+  if (count > 0) {
+    out.lufs = Lufs(sum / count);
+  }
+  return out;
+}
+
 void Track::SetRegion(double start, double end) {
   region_start_ = std::max(start, 0.0);
   region_end_ = std::max(end, 0.0);
@@ -256,6 +401,7 @@ void Track::Adopt(Track& next) {
   impl_ = std::move(next.impl_);
   path_ = std::move(next.path_);
   pcm_ = std::move(next.pcm_);
+  gain_ = next.gain_;
   decoded_ = next.decoded_;
   total_ = next.total_;
   position_ = 0;
@@ -282,14 +428,19 @@ void Track::Convert(const uint8_t* const* data, int samples) {
     }
     return;
   }
-  // Big-endian, as the voice reads the XMA decoder's samples.
+  // The level, then big-endian, as the voice reads the XMA decoder's samples.
+  const bool scale = gain_ != 1.0;
   const size_t at = pcm_.size();
   pcm_.resize(at + size_t(made) * channels_ * 2);
   uint8_t* p = pcm_.data() + at;
   for (size_t i = 0; i < size_t(made) * channels_; i++) {
-    const uint16_t v = uint16_t(impl_->converted[i]);
-    *p++ = uint8_t(v >> 8);
-    *p++ = uint8_t(v);
+    int32_t v = impl_->converted[i];
+    if (scale) {
+      v = int32_t(std::lrint(std::clamp(SoftClip(v / 32768.0 * gain_) * 32768.0, -32768.0, 32767.0)));
+    }
+    const uint16_t u = uint16_t(v);
+    *p++ = uint8_t(u >> 8);
+    *p++ = uint8_t(u);
   }
   decoded_ += uint32_t(made);
 }

@@ -1,9 +1,8 @@
 @echo off
-rem Build sbx.exe with the native Vulkan renderer (SBX_NATIVE_RENDERER=ON):
+rem Build sbx.exe with the native Vulkan renderer (the only renderer):
 rem   build_vulkan.bat [preset]   (default win-amd64-relwithdebinfo)
 rem
-rem Output: out\build\<preset>-vulkan\sbx.exe, separate from build.bat's
-rem out\build\<preset> (the emulated GPU build). Configure runs every time.
+rem Output: out\build\<preset>-vulkan\sbx.exe. Configure runs every time.
 rem Logged to out\build_vulkan.log (overwritten each run). On a failure the
 rem last lines and every "error" line are shown and the window waits for a
 rem key (set SBX_NOPAUSE=1 to skip that).
@@ -22,8 +21,8 @@ if not exist "generated\default\sources.cmake" (
   goto :failed
 )
 
-echo === Configuring ^(%PRESET%, SBX_NATIVE_RENDERER=ON, %B%^)
-cmake --preset %PRESET% -B "%B%" -DSBX_NATIVE_RENDERER=ON >> "%LOG%" 2>&1 || goto :failed
+echo === Configuring ^(%PRESET%, %B%^)
+cmake --preset %PRESET% -B "%B%" >> "%LOG%" 2>&1 || goto :failed
 
 echo === Building ^(the first build compiles the Vulkan SDK and generated code: slow^)
 cmake --build "%B%" >> "%LOG%" 2>&1 || goto :failed

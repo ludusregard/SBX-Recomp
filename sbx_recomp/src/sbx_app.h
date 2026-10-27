@@ -9,7 +9,7 @@
 #include "audio/native_audio.h"
 #include "hooks/custom_music.h"
 #include "hooks/patch_loader.h"
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
 #include "base/log_sdk.h"
 #include "movies/movie.h"
 #include "native/app_window.h"
@@ -36,12 +36,12 @@ class SbxApp : public rex::ReXApp {
   void OnPostSetup() override {
     patch_loader::SetGameDataRoot(game_data_root());
     custom_music::SetGameDataRoot(game_data_root());
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
     movies::movie::SetDataRoot(game_data_root());
 #endif
   }
 
-#ifdef SBX_NATIVE_RENDERER
+#ifdef SBX_VULKAN_RENDERER
   // The native renderer (src/native/) draws in its own window: the SDK's is
   // hidden and gets its events (src/native/app_window.cpp).
   bool SetupPresentation() override {

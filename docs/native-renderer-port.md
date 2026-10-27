@@ -5,8 +5,9 @@ its `rexglue-removal-project` branch, 2026-10-23) into `src/native/`. Plan:
 `claude/sbx-native-vulkan-plan.md` in the SBX Recomp project. Address map:
 `claude/sbx-native-renderer-address-map.md`.
 
-The build option `SBX_NATIVE_RENDERER` is OFF by default. With it OFF,
-nothing here is compiled and the game builds as before.
+The native renderer is the only build now (`build_vulkan.bat`). It was an option
+(`SBX_NATIVE_RENDERER`, off by default) until 2026-10-26, when the emulated GPU
+build was removed and the define renamed `SBX_VULKAN_RENDERER` (always set).
 
 ## The main finding: SBX's graphics library is a different revision
 
@@ -138,11 +139,10 @@ patching).
   (`sub_82091FB0`), the vblank wait dropped, `TextureCache_RaceLeft` when a
   race ends, `AppWindow_SetSdkWindow` in `SbxApp::SetupPresentation`,
   `subtick::GameMessages_PassFromAnyThread` for the buffer logs.
-- `CMakeLists.txt`: with `SBX_NATIVE_RENDERER=ON`, the SDK is built for
-  Vulkan (not D3D12), `patches/rexglue-sdk-native/` is applied (SDL as a
+- `CMakeLists.txt`: the SDK is built for
+  Vulkan (not D3D12), `patches/rexglue-sdk-vulkan/` is applied (SDL as a
   DLL), `sbx_xenos_shaders` is built from the SDK's translator sources, and
-  the SDL, Vulkan and xxHash headers are on the include path. The xenos
-  plugin is still built, for comparisons.
+  the SDL, Vulkan and xxHash headers are on the include path.
 
 ## Still to check
 

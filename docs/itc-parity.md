@@ -21,7 +21,7 @@ renderer are taken only where they're renderer-agnostic in substance.
 |---|---|---|
 | Per-frame logic: blink timers, texture animations, minimap blink, play time, UI movie replay, race overlays and their sprite recorders | `sub_820DC5C8`, `820F1038`, `820F5610`, `82107A38`, `8211D4B8`, `8215BE00`, `82127C08`, `821281B0` | `src/subtick/per_frame_logic.cpp` |
 | Action mappers once a tick (`--input_mappers_by_tick`, the pause menu's repeat; `pause-menu-fix.md`) | `sub_8210B140` on logic passes only | `src/subtick/input.cpp` |
-| Native Vulkan renderer, unlocked resolution (`--width`/`--height`), `--xbox_gamma`, `--motion_blur` | | `src/native/`, `SBX_NATIVE_RENDERER=ON` (`docs/native-renderer-port.md`) |
+| Native Vulkan renderer, unlocked resolution (`--width`/`--height`), `--xbox_gamma`, `--motion_blur` | | `src/native/`, the only build (`build_vulkan.bat`; `docs/native-renderer-port.md`) |
 | The per-frame state finder (`--find_per_frame_state`) | | `src/debug/frame_state_diff.cpp` (Windows memory map, race-end mode) |
 
 ## Phase 1: game-logic fixes and tools (renderer-agnostic)
@@ -94,8 +94,8 @@ code; none changes the game's audio logic.
    renderer (`Passes::DrawMovie`, a YUV shader), sound mixed into the
    output above. Needs ITC's upstream FFmpeg (a submodule pinned to a
    release, with its pre-made configs in `thirdparty/ffmpeg-config/`), the
-   same build step 2 uses. The emulated GPU build keeps the game's own
-   movie library (it draws through the emulated GPU).
+   same build step 2 uses. The emulated GPU build (removed 2026-10-26) kept the
+   game's own movie library (it drew through the emulated GPU).
 4. **XACT and the sound cues natively** (`src/xact/`, `src/sound_cues/`):
    in progress at ITC (2026-10-23); follow it once it settles.
 

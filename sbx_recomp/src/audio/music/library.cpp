@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -14,6 +15,14 @@ namespace audio::music {
 namespace {
 
 constexpr const char* kMetadataName = "metadata.xml";
+
+// Adaptive volume: a track's integrated loudness (LUFS) is brought to the
+// game's music's average, -11.2 LUFS: the mean of seven songs measured through
+// the game's XMA path (bgm_tmp_06, 07 and 14, and the four BGM_SYSTEM songs:
+// -9.6 to -12.6 each). A change is limited to 12 dB either way, so a
+// near-silent file doesn't turn into hiss and a very loud one isn't crushed.
+constexpr double kTargetLufs = -11.2;
+constexpr double kMaxChangeDb = 12.0;
 
 // A path's name as UTF-8 (std::filesystem gives wide strings on Windows).
 std::string Utf8Name(const std::filesystem::path& path) {
@@ -54,7 +63,7 @@ bool IsMusicFile(const std::filesystem::path& path) {
 }
 
 void Library::Scan(const std::filesystem::path& root, const std::vector<std::string>& categories,
-                   const Log& log, const ValidGame& valid_game) {
+                   const Log& log, const ValidGame& valid_game, bool adaptive_volume) {
   folders_.clear();
   std::error_code ec;
   if (!std::filesystem::is_directory(root, ec)) {
@@ -191,8 +200,13 @@ void Library::Scan(const std::filesystem::path& root, const std::vector<std::str
         log(Level::kWarning, where + "/" + name + " " + error + "; skipped");
         continue;
       }
+      std::string levels;
       if (t != metadata.tracks.end()) {
         entry.weight = t->weight;
+        entry.choice.gain = t->volume;
+        if (t->volume != 1) {
+          levels += ", volume " + Seconds(t->volume);
+        }
         if (t->loop_in) {
           if (info->seconds > 0 && *t->loop_out > info->seconds + 0.01) {
             log(Level::kWarning, where + "/" + kMetadataName + ", line " +
@@ -205,6 +219,21 @@ void Library::Scan(const std::filesystem::path& root, const std::vector<std::str
           }
         }
       }
+      if (adaptive_volume) {
+        auto loud = Track::Measure(file, &error);
+        if (!loud) {
+          log(Level::kWarning, where + "/" + name + " " + error + "; it plays at its own level");
+        } else if (loud->lufs < -100) {
+          log(Level::kWarning, where + "/" + name +
+                                   " is silent or too short to measure; it plays at its own level");
+        } else {
+          const double change =
+              std::clamp(kTargetLufs - loud->lufs, -kMaxChangeDb, kMaxChangeDb);
+          entry.choice.gain *= std::pow(10.0, change / 20);
+          levels += ", " + Seconds(loud->lufs) + " LUFS, peak " + Seconds(loud->peak_db) +
+                    " dBFS, adaptive " + (change >= 0 ? "+" : "") + Seconds(change) + " dB";
+        }
+      }
       std::string loop = entry.choice.loop_out > 0
                              ? ", loops " + Seconds(entry.choice.loop_in) + "-" +
                                    Seconds(entry.choice.loop_out) + " s"
@@ -212,7 +241,7 @@ void Library::Scan(const std::filesystem::path& root, const std::vector<std::str
       log(Level::kInfo, where + "/" + name + ": " + info->codec + ", " +
                             std::to_string(info->sample_rate) + " Hz, " +
                             std::to_string(info->channels) + " ch, " + Seconds(info->seconds) +
-                            " s, weight " + Seconds(entry.weight) + loop);
+                            " s, weight " + Seconds(entry.weight) + loop + levels);
       folder.entries.push_back(std::move(entry));
     }
 
