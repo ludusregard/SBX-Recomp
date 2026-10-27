@@ -25,6 +25,13 @@ class SbxApp : public rex::ReXApp {
         PPCImageConfig));
   }
 
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+    if (paths.game_data_root.empty()) {
+        paths.game_data_root =
+            rex::filesystem::GetExecutableFolder() / "assets";
+    }
+  }
+
   // Our own audio output instead of the SDK's render driver and Audio Worker
   // (src/audio/native_audio.cpp, from ITC-Recomp; --native_audio=false for
   // the SDK's).

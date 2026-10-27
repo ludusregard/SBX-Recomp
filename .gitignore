@@ -8,6 +8,7 @@
 # Build output
 /sbx_recomp/out/
 /sbx_recomp/release/
+/sbx_recomp/release_test/
 
 # Codegen bookkeeping with machine-specific absolute paths.
 /sbx_recomp/generated/default/codegen.d
