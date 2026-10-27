@@ -33,6 +33,10 @@
 
 REXCVAR_DECLARE(bool, subtick);
 
+REXCVAR_DEFINE_BOOL(redraw_rival_logo, true, "SBX",
+                    "Draw the rival's logo in the rival intro cutscene on render-only passes "
+                    "too (the cutscene still steps once a tick)");
+
 namespace {
 
 bool RenderOnly() {
@@ -350,6 +354,100 @@ extern "C" REX_FUNC(sub_8211D4B8) {
   g_added = added_before;
 }
 
+// The car's draw flag (Car::DrawUpdate's r3 + 4296; 0 and the call draws
+// nothing). Update sets it once a tick (Car::TickUpdate, sub_8215A788), and
+// the cars' draw (sub_820C5BA0) changes it between views: the player's car in
+// cockpit view is drawn twice a pass, and after the first call the flag is 0.
+// In a race the cars' draw sets it again for each view on every pass, but in
+// replays it doesn't, so only logic passes (after Update) drew the cockpit:
+// it flickered in replays, paused too (--log_cockpit_draw: on logic passes
+// the player's two calls saw 1 then 0, on render-only passes 0 and 0). On
+// render-only passes each call now gets the flag the logic pass's same call
+// (by car and order within the pass) had. In races that's what the draw sets
+// anyway, so nothing changes there.
+REXCVAR_DEFINE_BOOL(per_tick_car_draw_flag, true, "SBX",
+                    "On render-only passes, give each car draw the draw flag the logic pass's "
+                    "same call had (the cockpit flickered in replays)");
+
+namespace {
+constexpr uint32_t kDrawFlagOffset = 4296;  // from Car::DrawUpdate's r3
+
+class HoldDrawFlag {
+ public:
+  void Apply(uint8_t* base, uint32_t object) {
+    uint64_t pass = subtick::GameMessages_PassNumber();
+    if (pass != pass_) {
+      pass_ = pass;
+      occurrences_.clear();
+    }
+    size_t occurrence = size_t(occurrences_[object]++);
+    uint32_t address = object + kDrawFlagOffset;
+    if (!RenderOnly()) {
+      std::vector<uint32_t>& values = logic_[object];
+      if (occurrence == 0) {
+        values.clear();
+      }
+      values.push_back(guest::LoadU32(base, address));
+      return;
+    }
+    auto it = logic_.find(object);
+    if (it == logic_.end() || occurrence >= it->second.size()) {
+      return;  // not drawn this way by the logic pass: left as it is
+    }
+    guest::StoreU32(base, address, it->second[occurrence]);
+  }
+
+ private:
+  uint64_t pass_ = ~0ull;
+  std::unordered_map<uint32_t, int> occurrences_;
+  std::unordered_map<uint32_t, std::vector<uint32_t>> logic_;
+};
+HoldDrawFlag g_draw_flag;
+}  // namespace
+
+// --log_cockpit_draw (diagnostic, read only): one line per
+// Car::DrawUpdate call with what decides how the car is drawn: its draw and
+// interior flags (+4296, +4300), the hide flag (+5028), the parts word
+// (+5084), the draw mode (+32), the viewport's view mode ([[0x826B29C8]] +
+// 1860), which of the 21 camera passes are active (+588) and the type (+584)
+// of passes 0 and 3. Turn it on from the overlay during the replay: it logs
+// the next 300 calls.
+REXCVAR_DEFINE_BOOL(log_cockpit_draw, false, "SBX",
+                    "Diagnostic: log each car draw's flags and the active camera passes on "
+                    "logic and render-only passes (the next 300 calls; turn on during a replay)");
+
+namespace {
+constexpr uint32_t kViewports = 0x826B29C8;  // [..] + 0: viewport 0
+uint32_t g_cockpit_log_lines = 0;
+
+bool GuestPointer(uint32_t address) {
+  return address >= 0x40000000 && address < 0x90000000;
+}
+
+void LogCockpitDraw(uint8_t* base, uint32_t object) {
+  if (!REXCVAR_GET(log_cockpit_draw) || g_cockpit_log_lines >= 300) {
+    return;
+  }
+  uint32_t viewport = guest::LoadU32(base, kViewports);
+  int64_t view = GuestPointer(viewport) ? int64_t(guest::LoadU32(base, viewport + 1860)) : -1;
+  uint32_t active = 0;
+  for (uint32_t i = 0; i < 21; i++) {
+    if (guest::LoadU32(base, kCameraPasses + i * 592 + 588) != 0) {
+      active |= 1u << i;
+    }
+  }
+  REXLOG_INFO("cockpit draw (pass {} {}): object {:08X} draw {} interior {} hidden {} parts {:08X} "
+              "mode {} view {} active passes {:06X} type0 {} type3 {}",
+              subtick::GameMessages_PassNumber(), RenderOnly() ? "render" : "logic", object,
+              guest::LoadU32(base, object + 4296), guest::LoadU32(base, object + 4300),
+              guest::LoadU32(base, object + 5028), guest::LoadU32(base, object + 5084),
+              guest::LoadU32(base, object + 32), view, active,
+              guest::LoadU32(base, kCameraPasses + 584),
+              guest::LoadU32(base, kCameraPasses + 3 * 592 + 584));
+  g_cockpit_log_lines++;
+}
+}  // namespace
+
 // Car::DrawUpdate (r3 = the car - 4288), every pass: first lowers the boost
 // value (car+704, set again each tick) by 1.0, then poses and draws the car.
 // On render-only passes the boost is replayed from the logic pass, so the
@@ -359,6 +457,10 @@ extern "C" REX_FUNC(sub_820DA930) {
   // The car's world matrix is recorded as the tick's pose on logic passes
   // (car_transforms.cpp), and blended before Race::DrawStep.
   uint32_t object = ctx.r3.u32;
+  if (REXCVAR_GET(subtick) && REXCVAR_GET(per_tick_car_draw_flag)) {
+    g_draw_flag.Apply(base, object);
+  }
+  LogCockpitDraw(base, object);
   subtick::CarTransforms_Record(base, object + kDrawUpdateCarOffset);
   subtick::CarTransformRestore pose =
       subtick::CarTransforms_DrawBegin(base, object + kDrawUpdateCarOffset);
@@ -670,4 +772,151 @@ extern "C" REX_FUNC(sub_8212BDA0) {
       guest::StoreFloat(base, address + 4 * k, centre[k]);
     }
   }
+}
+
+// The rival intro cutscene (Update handler 0x82157948, a jump to sub_821573E0).
+// It steps the cutscene and, deep inside (sub_82153A10), draws the rival's logo
+// with sub_8220F7B0 (r3 = the logo's movie entry), which advances and draws the
+// logo's UI movie. Update is skipped on render-only passes, so the logo showed on
+// logic passes only (flicker). With --redraw_rival_logo, render-only passes
+// deliver Update to this handler alone (game_messages.cpp): there the cutscene
+// isn't stepped, only the logo is drawn, with the entry the logic pass drew. The
+// UI movie replay keeps the logo advancing once a tick: the logo is a UI movie
+// (the boss and rival intro screen, BUILD 00022624: the emblems and their light
+// effects), and sub_8220F7B0 advances and draws it through sub_8211E378, a jump
+// to the UI movie update sub_8211D4B8 (above). As ITC-Recomp's fix
+// (docs/frame-interpolation.md, "The rival logo at the race start").
+namespace {
+bool g_in_rival_cutscene = false;
+uint32_t g_rival_logo = 0;  // the entry the last logic pass drew, or 0
+constexpr uint32_t kRivalLogoReturn = 0x82153BC8;  // the logo's call in sub_82153A10
+}  // namespace
+
+extern "C" REX_FUNC(sub_8220F7B0) {
+  REX_FUNC_PROLOGUE();
+  if (g_in_rival_cutscene) {
+    g_rival_logo = ctx.r3.u32;
+  }
+  __imp__sub_8220F7B0(ctx, base);
+}
+
+extern "C" REX_FUNC(sub_821573E0) {
+  REX_FUNC_PROLOGUE();
+  if (!RenderOnly()) {
+    g_rival_logo = 0;
+    g_in_rival_cutscene = true;
+    __imp__sub_821573E0(ctx, base);
+    g_in_rival_cutscene = false;
+    return;
+  }
+  if (g_rival_logo == 0) {
+    return;
+  }
+  // The original's stack frame (stwu r1,-208(r1)).
+  guest::StackFrame frame(ctx, 208);
+  ctx.r3.u64 = g_rival_logo;
+  ctx.lr = kRivalLogoReturn;
+  sub_8220F7B0(ctx, base);
+}
+
+// The cockpit dials: sub_820E3EB0 (the speedometer and tachometer) and
+// sub_820E4178 (the dash's other needles, turbo and oil pressure among them),
+// r3 = the dash, r4 = the car. Both are stateless: on every pass they turn the
+// car's gauge values (car + 696 speed, + 700 revs, + 704 boost, + 712, + 716,
+// + 720) into needle angles and draw the needles. The angle map (sub_820D32D0,
+// and the tachometer's sub_820D3388) jumps at the ends of its range: below it
+// the start angle, above it the end angle, but inside it
+// ((value - from) / (to - from)) * (end - start), without the start added back.
+// So a gauge at the end of its range that differs even slightly between the
+// logic pass and a render-only pass (Car::DrawUpdate lowers the boost on every
+// call, replayed only when the calls line up) swings the needle from one end of
+// the dial to the other, while mid-range the same difference barely shows: the
+// needles flipped between min and max at any rate above 30 Hz. On render-only
+// passes the dials now read the gauge values the logic pass's same call read
+// (matched by dash, car and order within the pass), and the values are put
+// back after, so the needles move once a tick as on the 360 (as ITC-Recomp's
+// --native_cockpit_dials keeps its gauges); the car under them is still
+// blended.
+REXCVAR_DEFINE_BOOL(per_tick_cockpit_dials, true, "SBX",
+                    "Pose the cockpit dials' needles from the logic pass's gauge values on "
+                    "render-only passes (above 30 fps they flipped between their ends)");
+
+namespace {
+constexpr std::array<uint32_t, 6> kDialGaugeOffsets = {696, 700, 704, 712, 716, 720};
+using DialGauges = std::array<uint32_t, 6>;
+
+DialGauges ReadDialGauges(uint8_t* base, uint32_t car) {
+  DialGauges gauges;
+  for (size_t i = 0; i < gauges.size(); i++) {
+    gauges[i] = guest::LoadU32(base, car + kDialGaugeOffsets[i]);
+  }
+  return gauges;
+}
+
+void WriteDialGauges(uint8_t* base, uint32_t car, const DialGauges& gauges) {
+  for (size_t i = 0; i < gauges.size(); i++) {
+    guest::StoreU32(base, car + kDialGaugeOffsets[i], gauges[i]);
+  }
+}
+
+class HoldDialGauges {
+ public:
+  template <typename Call>
+  void Run(uint8_t* base, uint32_t dash, uint32_t car, Call&& call) {
+    uint64_t pass = subtick::GameMessages_PassNumber();
+    if (pass != pass_) {
+      pass_ = pass;
+      occurrences_.clear();
+    }
+    uint64_t key = (uint64_t(dash) << 32) | car;
+    size_t occurrence = size_t(occurrences_[key]++);
+    DialGauges now = ReadDialGauges(base, car);
+    if (!RenderOnly()) {
+      std::vector<DialGauges>& calls = held_[key];
+      if (occurrence == 0) {
+        calls.clear();
+      }
+      calls.push_back(now);
+      call();
+      return;
+    }
+    auto it = held_.find(key);
+    if (it == held_.end() || it->second.empty()) {
+      call();  // no logic pass drew these dials yet
+      return;
+    }
+    const std::vector<DialGauges>& calls = it->second;
+    WriteDialGauges(base, car, calls[std::min(occurrence, calls.size() - 1)]);
+    call();
+    WriteDialGauges(base, car, now);
+  }
+
+ private:
+  uint64_t pass_ = ~0ull;
+  std::unordered_map<uint64_t, int> occurrences_;
+  std::unordered_map<uint64_t, std::vector<DialGauges>> held_;
+};
+HoldDialGauges g_dial_gauges;
+
+bool HoldDials() {
+  return REXCVAR_GET(subtick) && REXCVAR_GET(per_tick_cockpit_dials);
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_820E3EB0) {
+  REX_FUNC_PROLOGUE();
+  if (!HoldDials()) {
+    __imp__sub_820E3EB0(ctx, base);
+    return;
+  }
+  g_dial_gauges.Run(base, ctx.r3.u32, ctx.r4.u32, [&] { __imp__sub_820E3EB0(ctx, base); });
+}
+
+extern "C" REX_FUNC(sub_820E4178) {
+  REX_FUNC_PROLOGUE();
+  if (!HoldDials()) {
+    __imp__sub_820E4178(ctx, base);
+    return;
+  }
+  g_dial_gauges.Run(base, ctx.r3.u32, ctx.r4.u32, [&] { __imp__sub_820E4178(ctx, base); });
 }

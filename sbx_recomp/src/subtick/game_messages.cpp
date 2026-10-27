@@ -22,6 +22,7 @@
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
+REXCVAR_DECLARE(bool, redraw_rival_logo);
 REXCVAR_DEFINE_BOOL(log_message_handlers, false, "SBX",
                     "Diagnostic: log the Update and Draw message handlers a logic pass "
                     "delivers to whenever they change (entering a screen: finds its draw step, "
@@ -43,6 +44,10 @@ constexpr uint32_t kMessageBytes = 12;  // id and two arguments
 // Return addresses of the dispatcher's two calls, as the original sets them.
 constexpr uint32_t kPickHandlerReturn = 0x82106500;
 constexpr uint32_t kHandlerCallReturn = 0x82106518;
+
+// The rival intro cutscene's Update handler (per_frame_logic.cpp): the one
+// Update render-only passes still deliver, to redraw its logo.
+constexpr uint32_t kRivalCutsceneHandler = 0x82157948;
 
 constexpr uint32_t kDelegateInvoke = 0x8216F0F8;
 constexpr uint32_t kMemberDelegateInvoke = 0x8222E468;
@@ -82,7 +87,9 @@ void LogHandlersIfChanged() {
 }
 
 // Delivers one message to each handler.
-void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t message) {
+// only_target, when set, delivers to that handler alone.
+void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t message,
+             uint32_t only_target = 0) {
   uint32_t handler_count = guest::LoadU32(base, dispatcher + kHandlerCountOffset);
   for (uint32_t i = 0; i < handler_count; i++) {
     // sub_82106410 picks the object that handles this message for handler
@@ -98,6 +105,9 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t dispatcher, uint32_t messa
     uint32_t target = (method == kDelegateInvoke || method == kMemberDelegateInvoke)
                           ? guest::LoadU32(base, object + 8)
                           : method;
+    if (only_target != 0 && target != only_target) {
+      continue;
+    }
     if (REXCVAR_GET(log_message_handlers) && !g_render_only_pass) {
       g_pass_handlers.emplace_back(message, target);
     }
@@ -126,7 +136,12 @@ void DispatchMessages(PPCContext& ctx, uint8_t* base, uint32_t dispatcher) {
     }
     if (guest::LoadU32(base, message) == kUpdate && g_render_only_pass &&
         std::this_thread::get_id() == g_main_thread) {
-      continue;  // render-only: the game doesn't advance
+      // Render-only: the game doesn't advance. The rival intro cutscene's
+      // handler still runs, to redraw its logo (per_frame_logic.cpp).
+      if (REXCVAR_GET(redraw_rival_logo)) {
+        Deliver(ctx, base, dispatcher, message, kRivalCutsceneHandler);
+      }
+      continue;
     }
     Deliver(ctx, base, dispatcher, message);
   }

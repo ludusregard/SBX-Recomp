@@ -21,4 +21,4 @@ set "REX_FULLSCREEN=false"
 set "REX_MNK_MODE=true"
 if "%REX_LOG_LEVEL%"=="" set "REX_LOG_LEVEL=info"
 
-"%exe%" %*  --new_music_roll=1 --width=3840 --height=2160
+"%exe%" %*

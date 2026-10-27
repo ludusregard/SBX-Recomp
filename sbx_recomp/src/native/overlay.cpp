@@ -34,11 +34,6 @@
 #include <string>
 #include <vector>
 
-ITC_FLAG_STRING(overlay_font, "", "SBX",
-                "The overlay's font: empty for the built-in Intel One Mono, or a TrueType file "
-                "(.ttf) by path or by name in the Windows fonts folders (the system's and your "
-                "own). ImGui's built-in font if a file doesn't load. Read at startup");
-
 namespace native::overlay {
 namespace {
 
@@ -157,10 +152,8 @@ void ApplyAccent(ImGuiStyle& style) {
   grey(ImGuiCol_FrameBgActive, 0.28f, 0.7f);
   grey(ImGuiCol_Tab, 0.13f, 0.9f);
   grey(ImGuiCol_TabDimmed, 0.10f, 0.8f);
-  // The accent, at twice the strengths of the first version (brighter over the
-  // dark).
   auto tint = [&style](ImGuiCol which, float alpha) {
-    style.Colors[which] = ImVec4(kAccent.x, kAccent.y, kAccent.z, std::min(alpha * 2.0f, 1.0f));
+    style.Colors[which] = ImVec4(kAccent.x, kAccent.y, kAccent.z, std::min(alpha * 1.5f, 1.0f));
   };
   tint(ImGuiCol_ResizeGrip, 0.2f);
   tint(ImGuiCol_CheckMark, 1.0f);
@@ -195,46 +188,18 @@ void ApplyAccent(ImGuiStyle& style) {
 // The font's size, in the window's units (the scale is applied on top).
 constexpr float kFontSize = 15.0f;
 
-// The overlay's font: Intel One Mono, built in (generated_overlay_font.h), or
-// overlay_font's file, as a path or as a name in the Windows fonts folders
-// (the system's, then the user's). Only TrueType loads: this ImGui has no
-// FreeType, so an OTF file fails and ImGui's built-in font stays.
 bool LoadFont(ImGuiIO& io, float size) {
-  const std::filesystem::path name = ITC_FLAG(overlay_font);
-  if (name.empty()) {
-    ImFontConfig config;
-    config.FontDataOwnedByAtlas = false;  // the built-in data isn't ImGui's to free
-    if (ImFont* font = io.Fonts->AddFontFromMemoryTTF(const_cast<uint8_t*>(k_overlay_font),
-                                                      int(k_overlay_font_size), size, &config)) {
-      io.FontDefault = font;
-      return true;
-    }
-    ITC_LOG_WARN("native renderer: overlay: the built-in font didn't load; ImGui's built-in font");
-    return false;
+  ImFontConfig config;
+  config.FontDataOwnedByAtlas = false;  // the built-in data isn't ImGui's to free
+
+  if (ImFont* font = io.Fonts->AddFontFromMemoryTTF(
+          const_cast<uint8_t*>(k_overlay_font),
+          int(k_overlay_font_size), size, &config)) {
+    io.FontDefault = font;
+    return true;
   }
-  std::vector<std::filesystem::path> candidates = {name};
-  if (name.is_relative()) {
-    if (const char* windows = std::getenv("WINDIR")) {
-      candidates.push_back(std::filesystem::path(windows) / "Fonts" / name);
-    }
-    if (const char* local = std::getenv("LOCALAPPDATA")) {
-      candidates.push_back(std::filesystem::path(local) / "Microsoft" / "Windows" / "Fonts" /
-                           name);
-    }
-  }
-  for (const std::filesystem::path& path : candidates) {
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error)) {
-      continue;
-    }
-    if (ImFont* font = io.Fonts->AddFontFromFileTTF(path.string().c_str(), size)) {
-      io.FontDefault = font;
-      ITC_LOG_INFO("native renderer: overlay font: {}", path.string());
-      return true;
-    }
-  }
-  ITC_LOG_WARN("native renderer: overlay font {} not found or not TrueType; ImGui's built-in font",
-               name.string());
+
+  ITC_LOG_WARN("native renderer: overlay: the built-in font didn't load; ImGui's built-in font");
   return false;
 }
 
@@ -365,23 +330,23 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"width", {"Graphics", "Window"}},
       {"height", {"Graphics", "Window"}},
       {"fullscreen", {"Graphics", "Window"}},
-      {"overlay_font", {"Graphics", "Overlay"}},
       {"camera_fov", {"Graphics", "Camera"}},
-      {"log_record_matrix", {"Logging", "Debugging"}},
       {"blur_frame_blend", {"Graphics", "Experimental"}},
       {"blur_frame_blend_center", {"Graphics", "Experimental"}},
       {"blur_frame_blend_edge", {"Graphics", "Experimental"}},
       {"blur_frame_blend_shutter", {"Graphics", "Experimental"}},
-      {"unlock_cut_cars", {"Fixes", "Cars"}},
-      {"cut_car_wheels", {"Fixes", "Cars"}},
-      {"cut_car_steelies", {"Fixes", "Cars"}},
       {"per_tick_post_race_check", {"Fixes", "Race"}},
       {"post_race_check_cycles", {"Fixes", "Race"}},
+      {"per_tick_car_draw_flag", {"Fixes", "Interpolation"}},
+      {"per_tick_cockpit_dials", {"Fixes", "Interpolation"}},
+      {"redraw_rival_logo", {"Fixes", "Interpolation"}},
       {"skip_cutscenes", {"Hooks", "Title"}},
       {"attract_after_s", {"Hooks", "Title"}},
+      {"unlock_cut_cars", {"Hooks", "Cars"}},
+      {"cut_car_wheels", {"Hooks", "Cars"}},
+      {"cut_car_steelies", {"Hooks", "Cars"}},
       {"native_audio", {"Hooks", "Audio"}},
       {"native_xma", {"Hooks", "Audio"}},
-      {"voice_thread", {"Hooks", "Audio"}},
       {"custom_music", {"Hooks", "Audio"}},
       {"new_music_roll", {"Hooks", "Audio"}},
       {"custom_music_shuffle", {"Hooks", "Audio"}},
@@ -394,11 +359,13 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"log_bgm", {"Logging", "Game"}},
       {"log_message_handlers", {"Logging", "Game"}},
       {"log_gpu_memory", {"Logging", "Native Renderer"}},
+      {"log_record_matrix", {"Logging", "Debugging"}},
       {"find_per_frame_state", {"Logging", "Debugging"}},
       {"find_per_frame_state_interval_ms", {"Logging", "Debugging"}},
       {"watch_addresses", {"Logging", "Debugging"}},
       {"find_any_steps", {"Logging", "Debugging"}},
       {"find_countdowns", {"Logging", "Debugging"}},
+      {"log_cockpit_draw", {"Logging", "Debugging"}},
   };
   if (auto it = kNamed.find(entry.name); it != kNamed.end()) {
     return it->second;
