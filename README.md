@@ -6,14 +6,22 @@ statically recompiling the game's PowerPC code to x86-64 with
 [ITC-Recomp](https://github.com/Spooky098529/ITC-Recomp), the recompilation
 of the game's US release, *Import Tuner Challenge*.
 
-Built with assistance of Claude with manual review and testing.
+Built with assistance of Claude with manual review and testing done by myself.
+
+<img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/f149178a-bdee-4b87-b07a-75e82796e35c" />
+
 
 ## Features
 
 - **Fix for the black screen after quest races** (on by default;
   `--post_race_check_fix=false` turns it off).
+- **Unlocked Frame Rate**: game logic is 30hz still but rendering is unlocked.
+- **Unlocked Resolution**: Play in 4k! (aspect ratio is still forced 16:9)
+- **HD Menu Text** (more menu redraws in the works)
+- **Additional Anti-Aliasing**: toggle options for CMAA2 and FXAA
 - **Patch loader**: game archive files are replaced by loose files in
   `assets/PATCH_DATA/` (on by default; `--patch_loader=false` turns it off).
+- **Custom Music Support**: add your own music to the game mix
 - **Shutoko Battle X Restored** archive files, loaded through the patch
   loader from a submodule in `assets/PATCH_DATA/BUILD/TXR/BUILD/`.
 - **Cut cars**: the ECLI, S30, L86 and T86 are offered from the start of a
@@ -38,20 +46,14 @@ and `assets/ADDON_DATA/` (new content, not used yet) are part of this repo.
 
 | Command | What it does |
 |---|---|
-| `run_vulkan.bat` | The game, on the native Vulkan renderer. |
-| `run_vulkan.bat --log_level=debug` | The same, with debug logging (written to `logs/`). |
+| `run.bat` | The game, on the native Vulkan renderer. |
+| `run.bat --log_level=debug` | The same, with debug logging (written to `logs/`). |
 
-Options can be added after either, e.g. `run_vulkan.bat --fullscreen=true`.
-
-## Known limitations
-
-- Early: only the base port works so far. Most of what ITC-Recomp adds
-  (its own renderer, audio, frame interpolation, resolutions) isn't here
-  yet.
+Options can be added after either, e.g. `run.bat --fullscreen=true`.
 
 ## Reporting problems
 
-Play with `run_vulkan.bat --log_level=debug`, then open an issue describing what you saw, and
+Play with `run.bat --log_level=debug`, then open an issue describing what you saw, and
 attach the newest file from the `logs` folder.
 
 ## Building from source
