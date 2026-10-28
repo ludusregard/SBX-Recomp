@@ -253,6 +253,27 @@ with no row); run it after changing either.
 | `sub_820ED0D0` | `SoftRaster::BlendPixel` |  | Samples the decal and blends it into the sheet: (src x a + dst x (256 - a)) >> 8. |
 | `sub_8218C240` | `PostRace::Check` | Overridden | Post-race check: once loaded (+9608), waits for a counter (global at `0x826C7EC4`) to reach 60 before setting the next state at +9604. The 60 is 1 here (`src/hooks/post_race.cpp`, `--post_race_check_fix`): with 60, the screen stays black after quest races on fast hardware. |
 
+## Font
+
+The text font (BUILD 22656, `docs/game_data.md`, "Font"). The font object
+holds its descriptions (one per font, picked by the style's +60, and +108
+for the second pass a style can ask for at +112), its style at +16, the
+current description at +36, and the shaders: vertex declaration +8368,
+vertex shader +8372, a pixel shader per channel at +8376.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_821089D8` | `Font::CreateShaders` |  | Compiles the font's HLSL (vertex shader source at `[0x825F32C0]`, a pixel shader per channel from the table at `0x826B58E4`) through `sub_822B3678`. |
+| `sub_82109280` | `Font::LoadSheet` | Wrapped | r4 the container, r6 the description it fills: +0 the glyph table's header, +4 its entries, +8 the XPR, +12 the texture, +16/+20 the texture's width and height (`sub_822A3160`, level 0), +24 1. Reached only through a pointer. The wrapper puts 576 x 928 there for a sheet that is an exact multiple of that size, so a larger sheet maps like the original (`src/hooks/font.cpp`). |
+| `sub_822A3160` | `Texture::GetLevelDesc` |  | r3 the texture, r4 the level, r5 the description: width at +24, height at +28. |
+| `sub_8210A530` | `Font::DrawText` |  | r5 the text (UTF-16): sets the description from the style's +60 and draws (`sub_8210A020`); again with +108 when the style's +112 is set. |
+| `sub_8210A020` | `Font::BuildText` |  | Counts the glyphs per channel (`sub_82108330`), lays them out (`sub_82109EB0` or `sub_82109BD0`) and records a draw per channel with that channel's pixel shader. |
+| `sub_82108330` | `Font::CountGlyphs` |  | Counts the text's glyphs in each channel (low 2 bits of the entry's second word), skipping spaces, line breaks and color codes. |
+| `sub_82109BD0` | `Font::LayOutText` |  | Lays out a line at a time: each glyph's pen moves by (advance >> 2) times the style's +36, then +8256 and the style's +28. Handles line breaks and the color codes (`FFD6`, `FFF6`-`FFFF`). |
+| `sub_82109EB0` | `Font::LayOutPositioned` |  | Like `Font::LayOutText` with each glyph's position taken from the font's table at +64. |
+| `sub_82109680` | `Font::AddGlyph` |  | r6 the character, r7 the color, f1/f2 the pen: six vertices (x, y, z, color, u, v; 24 bytes) into its channel's buffer, the texture coordinates from the index, the cell size and the description's +16/+20 (`docs/game_data.md`, "Font"). Clips through `sub_82108DB0` or `sub_82109088`. |
+| `sub_82108DB0` | `Font::ClipGlyph` |  | Clips a glyph's quad to the style's rectangle (+44 to +56), moving the texture coordinates by the same amount in texels of the description's +16/+20. 0 when nothing is left. |
+
 ## Fixed time step
 
 The game never measures elapsed time. Each pass of `App::Run`

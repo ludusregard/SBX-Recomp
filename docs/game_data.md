@@ -262,6 +262,54 @@ Control codes inside the strings (as 16-bit units unless noted):
 | `00 2E 00 00 00` | End of a character bio | `\.\` |
 | `30 00 30 00` | A number filled in at run time (times, stats) | `#\` |
 
+## Font (BUILD 22656, confirmed from the code)
+
+The game's text font: a container (see "Containers") of two files.
+
+File 0, the glyph table (BE):
+
+```
++0       u16  cell width in the sheet (28)
++2       u16  cell height (28)
++4       65536 entries of 4 bytes, one per UTF-16 code unit:
+           u16  glyph index in its channel
+           u16  advance in pixels << 2, ORed with the channel (0-3: R, G, B, A)
+```
+
+Codes the font doesn't have point at index 0 with a full-width advance. A
+space is index 0, advance 14 (half width); full-width characters advance 28.
+
+File 1, an XPR2 with one texture, `TSPFONT`: 576 x 928 A8R8G8B8, tiled.
+Each of its four channels is a sheet of glyphs on its own, in cells of the
+table's size, numbered across then down: columns = width / cell width (20),
+so 30 rows fill 840 of the 928 lines.
+
+How the game draws it (`docs/functions.md`, "Font"): `Font::LoadSheet`
+stores the texture's width and height in the font's description, and
+`Font::AddGlyph` writes each glyph as two triangles, one vertex buffer and
+one pixel shader per channel. The texture coordinates are worked out from
+the index, the cell size and the texture's size:
+
+```
+column = index % (width / cell width), row = index / (width / cell width)
+u = column * cell width / width,  v = row * cell height / height
+du = cell width / width,          dv = cell height / height
+```
+
+The quad on screen is cell width x cell height times the text style's
+scale, and the pen moves by the advance times the style's spacing. The
+vertex shader passes the coordinates through as they are (position - 0.5
+for the pixel center).
+
+So a larger sheet with the cells scaled up doesn't work by itself: the
+columns and coordinates come from its real size with the old cell size.
+Raising the cell size in the table fixes the coordinates but draws the
+glyphs that much larger. `src/hooks/font.cpp` gives `Font::LoadSheet` the
+original 576 x 928 for a sheet that is an exact multiple of it (2304 x
+3712 for 4x), so the coordinates come out as the same fractions of the
+larger sheet. The table stays as it is. The sheet has no mip levels;
+drawn much smaller than its cells, a large sheet may shimmer.
+
 ## Parameter tables (BUILD 72-83)
 
 Loaded together at boot by `sub_820CC048`. Values are little-endian.

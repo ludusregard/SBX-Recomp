@@ -98,6 +98,7 @@ set(SBX_SOURCES
     src/hooks/create_file.cpp
     src/hooks/custom_music.cpp
     src/hooks/cut_car_wheels.cpp
+    src/hooks/font.cpp
     src/hooks/lights.cpp
     src/hooks/patch_loader.cpp
     src/hooks/post_effects.cpp
