@@ -1,6 +1,6 @@
 # Status
 
-The state of `main` (2026-10-26). Update this when a fix, experiment or
+The state of `main` (2026-11-09). Update this when a fix, experiment or
 plan changes.
 
 ## Working
@@ -9,13 +9,35 @@ Boots and runs on Windows with the native Vulkan renderer ported from
 ITC-Recomp (`build_vulkan.bat`, `run_vulkan.bat`, `docs/native-renderer-port.md`).
 It's the only build since 2026-10-26: the emulated GPU build was removed (the
 SDK's Xenos plugin is no longer built). It also plays the movies
-through FFmpeg (`src/movies/`). It uses our own audio output (`src/audio/`, `--native_audio`). The Vulkan build can
+through FFmpeg (`src/movies/`). It uses our own audio output (`src/audio/`, and its own XMA decoding, `src/hooks/xma.cpp`; neither has a flag since 2026-11-09). The Vulkan build can
 also anti-alias the race's 3D view with CMAA2 (`--cmaa2`,
 `--cmaa2_threshold`) or FXAA (`--fxaa`), both working (the user's test,
 2026-10-25), and blur it by blending frames away from the screen's centre
 (`--blur_frame_blend`, off by default, with `--subtick` and a high `--max_fps`; not yet tested). Codegen is clean: 15,963
 functions, no unresolved branches or calls. What else came over from
 ITC-Recomp, and what's next: `docs/itc-parity.md`.
+
+Native game code (`docs/native-code.md`): the game's own subsystems
+rewritten as our C++, each behind a `--native_<name>` flag (F4, Hooks /
+Native Code), tested by playing with the flag on and off; every flag is on
+by default. In and tested (2026-11-09): `native_menu_sounds`,
+`native_data_files`, `native_framework`, `native_car_specs`,
+`native_menu_helpers`, `native_race_hud`, `native_data_tables`,
+`native_file_layer`, `native_track_zones` and `native_race_scene`. Written
+2026-11-09, to test: batch 3 (`native_shader_objects`,
+`native_screen_objects`, `native_scene_models`, `native_save_data`,
+`native_accessories`, `native_strings_and_font`,
+`native_screen_constructors`, `native_game_modes`) and batch 4
+(`native_collision`, `native_car_physics`, `native_vehicle`,
+`native_race_states`, `native_material_passes`,
+`native_replay_snapshots`) and batch 5 (`native_ui_movies`,
+`native_data_load`, `native_race_sounds`, `native_race_screens`,
+`native_race_hud_object`, `native_course_scenery`) and batch 6
+(`native_scene_loaders`, `native_scene`, `native_second_set`,
+`native_load_poll`, `native_car_makers`, `native_texture_compression`,
+`native_save_interface`). Every override in
+`src/` has a row in `docs/functions.md`
+(`sbx_recomp/tools/check_function_statuses.py`: no errors).
 
 ## Fixes
 
@@ -28,6 +50,33 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 
 ## Experiments
 
+- Built 2026-11-06, in the Windows builds since 2026-11-08; autosave and
+  the G-buffer confirmed in play (the user, 2026-11-09); the language toggle
+  works as far as it can without its files (to test once the patch's
+  language files are in `assets/ADDON_DATA/LANGUAGES/`):
+  - Language toggle, phase 1: `--language` (EN, JP, ...) and
+    `--font_quality` (hd, sd) pick the files in `assets/ADDON_DATA/LANGUAGES/`
+    at startup; language ids ignore `PATCH_DATA` (`src/hooks/patch_loader.cpp`,
+    "Languages" in `docs/modding-plan.md`). Nothing changes until that folder
+    holds files.
+  - Autosave: `--autosave` (off by default) saves through the game's own save
+    calls when back at the garage top after a shop or car menu, or after
+    racing; a "Saved" notice on the overlay. `--log_autosave` logs the menu
+    messages and save status values to confirm the ids
+    (`src/hooks/autosave.cpp`, "Saving" in `docs/menus.md`). It watches the
+    menus through the boot mode log's override of `sub_82106410`
+    (`src/hooks/title_screen.cpp`): the first version overrode it too.
+  - G-buffer lite: `--gbuffer` (off by default) builds the 3D view's depth
+    (as drawn, and view distance) and the camera's motion vectors into our own
+    buffers at its opaque resolve (`--gbuffer_resolve`, 1), from camera pass
+    0's view-projection handed over with each command list.
+    `--gbuffer_debug` 1-4 draws one over the frame (distance, motion, the
+    game's own velocity buffer, raw depth). Nothing else uses the buffers yet
+    (`BuildGBuffer` in `src/native/passes.cpp`, `glsl/gbuffer*.frag`).
+- Saved settings: F4's Save button writes the settings changed in the menu to
+  `sbx.toml` next to `sbx.exe`, which loads at every start; launch options
+  still win over it (`src/base/settings_file.cpp`, "Settings" in
+  `docs/build_run.md`). Not yet tested.
 - The cut cars (ECLI, S30, L86, T86) are offered from the start of a new
   game: their bits in the save's car unlock bits are set after
   `sub_82113FB0` and `sub_82114278` (`src/hooks/unlock_cut_cars.cpp`,
@@ -60,7 +109,7 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   (`src/hooks/cut_car_wheels.cpp`). Working in the garage. The wheel shop
   also offers them inch-ups (ECLI 3, the others 4); not yet tested.
 
-- Subtick (the `60fps` branch): frames between the game's 30 Hz ticks in
+- Subtick: frames between the game's 30 Hz ticks in
   races (`--subtick`, `--max_fps`), the cars' controls fed input sampled
   each frame and weighted per tick (`--subtick_input`,
   `--subtick_input_sensitivity`), written into the control record so
@@ -69,7 +118,7 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
   opponent marker are blended between ticks. The race overlays (opponent
   marker, tire smoke) draw on every frame, paused or not. Open: wheel spin
   and steering step per tick; check the light sources on car models for the
-  same camera-position shake the paint reflections had. Off by default (`src/subtick/`; "Subtick" in
+  same camera-position shake the paint reflections had. On by default (`src/subtick/`; "Subtick" in
   `docs/functions.md`).
 - Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`): removed
   2026-10-25; `cull_emulated_build.ps1` deletes `src/tick_rate/`. Their findings are in
@@ -77,18 +126,24 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 
 ## Mod tools
 
-- `mod_tools/car_specs.py`: the car specs to an Excel workbook and back,
+- `sbxr_tools/car_specs.py`: the car specs to an Excel workbook and back,
   byte for byte.
-- The Blender add-on (`mod_tools/blender_plugin/`, 1.0.0): imports cars
+- The Blender add-on (`sbxr_tools/blender_plugin/`, 1.0.0): imports cars
   and parts, exports edited parts for `assets/PATCH_DATA/`
-  (`mod_tools/blender_plugin/README.md`).
-- `mod_tools/cut_car_wheels.py`: the cut cars' wheel baselines
+  (`sbxr_tools/blender_plugin/README.md`).
+- `sbxr_tools/cut_car_wheels.py`: the cut cars' wheel baselines
   (`docs/cut_car_wheels.md`). Not yet tested in game.
 
 ## Docs
 
 - `docs/functions.md`: named functions, mostly matched from ITC-Recomp's
-  findings (`docs/porting-from-itc.md`), plus the data loading code.
+  findings (`docs/porting-from-itc.md`), plus the data loading code, and a
+  row for every override in `src/`.
+- `docs/native-code.md`: the native game code, by flag, and how to test it.
+- `docs/menus.md`: the front end's screens and menu messages.
+- `docs/audio.md` and `docs/custom_music.md`: sound, and custom music.
+- `docs/itc-parity.md`: what came over from ITC-Recomp, and what hasn't.
+- `docs/native-renderer-port.md`: the native renderer's port.
 - `docs/game_data.md`: the archives and data formats.
 - `docs/modding-plan.md`: the patch and addon loaders, adding cars.
 - `docs/cut_car_wheels.md`: the cut cars' wheel baselines.
@@ -96,8 +151,13 @@ ITC-Recomp, and what's next: `docs/itc-parity.md`.
 ## Not done yet
 
 - The rest of ITC-Recomp's parity plan (`docs/itc-parity.md`): XACT
-  natively, the SDK's kernel calls, the game's code natively. (XMA decoding
-  through FFmpeg is in, both builds.)
+  natively, the SDK's kernel calls. (Our own XMA decoding is in.)
+- Native game code (`docs/native-code.md`): test batches 3 to 6 in play
+  (each flag on and off); then the merge step (the addresses SBX's own
+  overrides already hold, SBX's version the base), the held folders (the
+  heap's, the renderer's, the kernel calls), and the larger functions each
+  subsystem left recompiled (the physics' step and solver, the race's ticks,
+  the movies' update and drawing).
 - `--skip_cutscenes`'s wait once the fast-forward ends: the pacer's next tick
   is now clamped to one tick ahead (`subtick/frame_pacer.cpp`); to confirm.
 - `--camera_fov` (the main camera's vertical FOV, Graphics/Experimental): works in the game (the user's test, 2026-10-25). Safe range 30 to 60 degrees (the game is about 47). Limitation: it changes every use of camera pass 0, so the replay and wanderer/boss cinematic camera tracks are affected too. Limiting it to racing is planned (`docs/functions.md`, "Main camera"), and the `--log_record_matrix` diagnostic is still in the code (off).

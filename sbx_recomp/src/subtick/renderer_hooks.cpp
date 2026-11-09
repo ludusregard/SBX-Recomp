@@ -26,6 +26,8 @@
 
 #include <rex/cvar.h>
 
+#include <cstring>
+
 REXCVAR_DEFINE_BOOL(subtick, true, "SBX",
                     "Experimental: in races, draw frames between the game's 30 Hz ticks "
                     "(--max_fps), with the cars' controls fed input sampled each frame "
@@ -35,6 +37,29 @@ namespace {
 
 // The video output object passed to the vblank wait: its graphics device.
 constexpr uint32_t kVideoOutputDeviceOffset = 140;
+
+#ifdef SBX_VULKAN_RENDERER
+// Camera pass 0's view-projection (docs/functions.md, "Known data": the
+// camera pass array at 0x826AA8E0, view-projection at +0x90).
+constexpr uint32_t kMainCameraViewProjection = 0x826AA8E0 + 0x90;
+
+// The camera the list just recorded was drawn with, for the native
+// renderer's own passes (--gbuffer). In a race only (the pass array holds the
+// race's camera then); with --subtick it's this frame's blended camera
+// (CarTransforms_RebuildCamera), still in place until CarTransforms_EndFrame.
+native::ListCamera CaptureListCamera(uint8_t* base) {
+  native::ListCamera camera;
+  if (!subtick::GameMessages_InRace()) {
+    return camera;
+  }
+  for (uint32_t i = 0; i < 16; i++) {
+    uint32_t word = guest::LoadU32(base, kMainCameraViewProjection + 4 * i);
+    std::memcpy(&camera.view_projection[i], &word, 4);
+  }
+  camera.valid = true;
+  return camera;
+}
+#endif
 
 // Main thread, once per main-loop pass, after the game's own wait for the
 // frame in flight: picks the coming pass.
@@ -76,7 +101,8 @@ void PaceNextPass(PPCContext& ctx, uint8_t* base) {
 extern "C" REX_FUNC(sub_82092E60) {
   REX_FUNC_PROLOGUE();
 #ifdef SBX_VULKAN_RENDERER
-  native::Renderer_OnListHandedOver(!subtick::GameMessages_IsRenderOnlyPass());
+  native::Renderer_OnListHandedOver(!subtick::GameMessages_IsRenderOnlyPass(),
+                                    CaptureListCamera(base));
 #endif
   __imp__sub_82092E60(ctx, base);
   if (!REXCVAR_GET(subtick)) {

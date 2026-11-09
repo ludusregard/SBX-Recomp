@@ -9,6 +9,9 @@
 #include "generated_aa_out_frag.h"
 #include "generated_frame_blend_frag.h"
 #include "generated_fxaa_frag.h"
+#include "generated_gbuffer_debug_frag.h"
+#include "generated_gbuffer_frag.h"
+#include "generated_gbuffer_ms_frag.h"
 #include "generated_gamma_comp.h"
 #include "generated_id_frag.h"
 #include "xbox_gamma_table.h"
@@ -1132,6 +1135,38 @@ struct Passes::State {
     uint64_t last_frame = 0;        // frame_serial when it last ran
   } frame_blend;
   uint64_t frame_serial = 0;  // BeginFrame counts frames
+  // --gbuffer, G-buffer lite (BuildGBuffer; glsl/gbuffer.frag): at the main
+  // view's gbuffer.at-th color resolve (1: the opaque scene), its depth into
+  // our own buffers, kept past the frame: depth (as drawn, and the view
+  // distance) and the camera's motion vectors, from this frame's and last
+  // frame's camera (the list's, Renderer_ReplayingCamera). --gbuffer_debug
+  // draws one of them over the frame (DrawGBufferDebug).
+  struct GBuffer {
+    bool enabled = false;
+    uint32_t at = 1;
+    int32_t debug = 0;  // 0 off; glsl/gbuffer_debug.frag's modes
+    float depth_range = 500.0f, velocity_scale = 20.0f;
+    bool tried = false, ready = false;
+    VkExtent2D extent{};
+    Image depth, velocity;  // R32G32F (depth, view distance); R16G16F (UV per frame)
+    VkImageLayout depth_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageLayout velocity_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkPipelineLayout build_layout = VK_NULL_HANDLE, debug_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout debug_set_layout = VK_NULL_HANDLE;
+    VkShaderModule build_pixel = VK_NULL_HANDLE, build_pixel_ms = VK_NULL_HANDLE,
+                   debug_pixel = VK_NULL_HANDLE;
+    VkPipeline build_pipeline = VK_NULL_HANDLE, build_pipeline_ms = VK_NULL_HANDLE;
+    std::map<std::pair<VkFormat, VkSampleCountFlagBits>, VkPipeline> debug_pipelines;
+    uint64_t built_frame = 0;  // frame_serial when last built
+    // Last built frame's camera (the game's view-projection, row vectors).
+    float previous[16] = {};
+    bool has_previous = false;
+    bool logged_no_camera = false, logged_no_depth = false, logged_extent = false;
+  } gbuffer;
+  bool CreateGBufferResources(VkExtent2D extent);
+  void BuildGBuffer(VkCommandBuffer commands, uint8_t* base, uint32_t device);
+  // Draws the --gbuffer_debug view over `target`'s top-left `extent`.
+  void DrawGBufferDebug(VkCommandBuffer commands, Target& target, VkExtent2D extent);
   bool CreateFrameBlendResources(const Target& main, VkExtent2D extent);
   void ApplyFrameBlend(VkCommandBuffer commands, Target& main);
   // Draws the main view's tonemapped average into `image` (left in
@@ -1343,9 +1378,11 @@ struct Passes::State {
   bool CreateResolveResources();
   VkPipeline GetResolvePipeline(VkFormat format, bool multisample);
   // A pipeline drawing the resolve's viewport-covering triangle with
-  // `pixel`, into one color attachment, no blending.
+  // `pixel`, into one color attachment (or `count` of `formats`, if given),
+  // no blending.
   VkPipeline MakeFullscreenPipeline(VkShaderModule pixel, VkPipelineLayout layout,
-                                    VkFormat format, VkSampleCountFlagBits samples);
+                                    VkFormat format, VkSampleCountFlagBits samples,
+                                    uint32_t count = 1, const VkFormat* formats = nullptr);
   bool CreateMovieResources(VkExtent2D extent);
   VkPipeline GetMoviePipeline(VkFormat format, VkSampleCountFlagBits samples);
   void EndRendering(VkCommandBuffer commands);
@@ -3471,6 +3508,366 @@ void Passes::State::ApplyFrameBlend(VkCommandBuffer commands, Target& main) {
   DrawIntoMainView(commands, main, extent, b.pipeline, b.set, &constants, sizeof(constants));
 }
 
+namespace {
+
+// 4x4 matrices as 16 floats, row by row (the game's layout).
+void MultiplyMatrices(const float a[16], const float b[16], float out[16]) {
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      float sum = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        sum += a[r * 4 + k] * b[k * 4 + c];
+      }
+      out[r * 4 + c] = sum;
+    }
+  }
+}
+
+// The inverse (by cofactors, in double); false if `m` is singular.
+bool InvertMatrix(const float m[16], float out[16]) {
+  double a[16], inv[16];
+  for (int i = 0; i < 16; i++) {
+    a[i] = m[i];
+  }
+  inv[0] = a[5] * a[10] * a[15] - a[5] * a[11] * a[14] - a[9] * a[6] * a[15] +
+           a[9] * a[7] * a[14] + a[13] * a[6] * a[11] - a[13] * a[7] * a[10];
+  inv[4] = -a[4] * a[10] * a[15] + a[4] * a[11] * a[14] + a[8] * a[6] * a[15] -
+           a[8] * a[7] * a[14] - a[12] * a[6] * a[11] + a[12] * a[7] * a[10];
+  inv[8] = a[4] * a[9] * a[15] - a[4] * a[11] * a[13] - a[8] * a[5] * a[15] +
+           a[8] * a[7] * a[13] + a[12] * a[5] * a[11] - a[12] * a[7] * a[9];
+  inv[12] = -a[4] * a[9] * a[14] + a[4] * a[10] * a[13] + a[8] * a[5] * a[14] -
+            a[8] * a[6] * a[13] - a[12] * a[5] * a[10] + a[12] * a[6] * a[9];
+  inv[1] = -a[1] * a[10] * a[15] + a[1] * a[11] * a[14] + a[9] * a[2] * a[15] -
+           a[9] * a[3] * a[14] - a[13] * a[2] * a[11] + a[13] * a[3] * a[10];
+  inv[5] = a[0] * a[10] * a[15] - a[0] * a[11] * a[14] - a[8] * a[2] * a[15] +
+           a[8] * a[3] * a[14] + a[12] * a[2] * a[11] - a[12] * a[3] * a[10];
+  inv[9] = -a[0] * a[9] * a[15] + a[0] * a[11] * a[13] + a[8] * a[1] * a[15] -
+           a[8] * a[3] * a[13] - a[12] * a[1] * a[11] + a[12] * a[3] * a[9];
+  inv[13] = a[0] * a[9] * a[14] - a[0] * a[10] * a[13] - a[8] * a[1] * a[14] +
+            a[8] * a[2] * a[13] + a[12] * a[1] * a[10] - a[12] * a[2] * a[9];
+  inv[2] = a[1] * a[6] * a[15] - a[1] * a[7] * a[14] - a[5] * a[2] * a[15] +
+           a[5] * a[3] * a[14] + a[13] * a[2] * a[7] - a[13] * a[3] * a[6];
+  inv[6] = -a[0] * a[6] * a[15] + a[0] * a[7] * a[14] + a[4] * a[2] * a[15] -
+           a[4] * a[3] * a[14] - a[12] * a[2] * a[7] + a[12] * a[3] * a[6];
+  inv[10] = a[0] * a[5] * a[15] - a[0] * a[7] * a[13] - a[4] * a[1] * a[15] +
+            a[4] * a[3] * a[13] + a[12] * a[1] * a[7] - a[12] * a[3] * a[5];
+  inv[14] = -a[0] * a[5] * a[14] + a[0] * a[6] * a[13] + a[4] * a[1] * a[14] -
+            a[4] * a[2] * a[13] - a[12] * a[1] * a[6] + a[12] * a[2] * a[5];
+  inv[3] = -a[1] * a[6] * a[11] + a[1] * a[7] * a[10] + a[5] * a[2] * a[11] -
+           a[5] * a[3] * a[10] - a[9] * a[2] * a[7] + a[9] * a[3] * a[6];
+  inv[7] = a[0] * a[6] * a[11] - a[0] * a[7] * a[10] - a[4] * a[2] * a[11] +
+           a[4] * a[3] * a[10] + a[8] * a[2] * a[7] - a[8] * a[3] * a[6];
+  inv[11] = -a[0] * a[5] * a[11] + a[0] * a[7] * a[9] + a[4] * a[1] * a[11] -
+            a[4] * a[3] * a[9] - a[8] * a[1] * a[7] + a[8] * a[3] * a[5];
+  inv[15] = a[0] * a[5] * a[10] - a[0] * a[6] * a[9] - a[4] * a[1] * a[10] +
+            a[4] * a[2] * a[9] + a[8] * a[1] * a[6] - a[8] * a[2] * a[5];
+  double det = a[0] * inv[0] + a[1] * inv[4] + a[2] * inv[8] + a[3] * inv[12];
+  if (!std::isfinite(det) || std::fabs(det) < 1e-30) {
+    return false;
+  }
+  for (int i = 0; i < 16; i++) {
+    out[i] = float(inv[i] / det);
+  }
+  return true;
+}
+
+}  // namespace
+
+bool Passes::State::CreateGBufferResources(VkExtent2D extent) {
+  VkDevice device = context.device;
+  GBuffer& g = gbuffer;
+  g.extent = extent;
+  const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  if (!CreateImage(g.depth, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R32G32_SFLOAT,
+                   {extent.width, extent.height, 1}, 1, usage, VK_IMAGE_ASPECT_COLOR_BIT) ||
+      !CreateImage(g.velocity, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R16G16_SFLOAT,
+                   {extent.width, extent.height, 1}, 1, usage, VK_IMAGE_ASPECT_COLOR_BIT)) {
+    return false;
+  }
+  auto module = [&](const uint32_t* code, size_t size, VkShaderModule& out) {
+    VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    info.codeSize = size;
+    info.pCode = code;
+    return vk::vkCreateShaderModule(device, &info, nullptr, &out) == VK_SUCCESS;
+  };
+  if (!module(k_gbuffer_frag, sizeof(k_gbuffer_frag), g.build_pixel) ||
+      !module(k_gbuffer_ms_frag, sizeof(k_gbuffer_ms_frag), g.build_pixel_ms) ||
+      !module(k_gbuffer_debug_frag, sizeof(k_gbuffer_debug_frag), g.debug_pixel)) {
+    return false;
+  }
+  // The build: the depth (set 0, as a resolve's source) and 92 bytes of
+  // constants (glsl/gbuffer.frag).
+  VkPushConstantRange build_push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 92};
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount = 1;
+  layout_info.pSetLayouts = &resolve_set_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges = &build_push;
+  if (vk::vkCreatePipelineLayout(device, &layout_info, nullptr, &g.build_layout) != VK_SUCCESS) {
+    return false;
+  }
+  // The debug view: three images and 28 bytes (glsl/gbuffer_debug.frag).
+  VkDescriptorSetLayoutBinding bindings[3];
+  for (uint32_t i = 0; i < 3; i++) {
+    bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                   nullptr};
+  }
+  VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  set_info.bindingCount = 3;
+  set_info.pBindings = bindings;
+  if (vk::vkCreateDescriptorSetLayout(device, &set_info, nullptr, &g.debug_set_layout) !=
+      VK_SUCCESS) {
+    return false;
+  }
+  VkPushConstantRange debug_push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 28};
+  layout_info.pSetLayouts = &g.debug_set_layout;
+  layout_info.pPushConstantRanges = &debug_push;
+  if (vk::vkCreatePipelineLayout(device, &layout_info, nullptr, &g.debug_layout) != VK_SUCCESS) {
+    return false;
+  }
+  const VkFormat formats[2] = {VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R16G16_SFLOAT};
+  g.build_pipeline = MakeFullscreenPipeline(g.build_pixel, g.build_layout, formats[0],
+                                            VK_SAMPLE_COUNT_1_BIT, 2, formats);
+  g.build_pipeline_ms = MakeFullscreenPipeline(g.build_pixel_ms, g.build_layout, formats[0],
+                                               VK_SAMPLE_COUNT_1_BIT, 2, formats);
+  return g.build_pipeline != VK_NULL_HANDLE && g.build_pipeline_ms != VK_NULL_HANDLE;
+}
+
+void Passes::State::BuildGBuffer(VkCommandBuffer commands, uint8_t* base, uint32_t device) {
+  GBuffer& g = gbuffer;
+  if (g.built_frame == frame_serial) {
+    return;  // once a frame
+  }
+  const ListCamera camera = Renderer_ReplayingCamera();
+  if (!camera.valid) {
+    if (!g.logged_no_camera) {
+      g.logged_no_camera = true;
+      ITC_LOG_INFO("native renderer: gbuffer: a main view frame without the camera (not a "
+                   "race, as of its pass); skipped until a race's");
+    }
+    g.has_previous = false;
+    return;
+  }
+  uint32_t depth_object = guest::LoadU32(base, device + kDeviceDepthStencil);
+  Target* depth = depth_object ? GetTarget(commands, base, depth_object, true) : nullptr;
+  if (!depth || !IsMainViewSurface(depth->surface)) {
+    if (!g.logged_no_depth) {
+      g.logged_no_depth = true;
+      ITC_LOG_WARN("native renderer: gbuffer: at the main view's resolve {} the depth bound "
+                   "isn't the main view's ({}); skipped",
+                   g.at, depth ? "another surface" : "none");
+    }
+    return;
+  }
+  const VkExtent2D extent{std::min(main_view_extent.width, depth->extent.width),
+                          std::min(main_view_extent.height, depth->extent.height)};
+  if (!g.tried) {
+    g.tried = true;
+    g.ready = CreateGBufferResources(extent);
+    if (g.ready) {
+      ITC_LOG_INFO("native renderer: gbuffer: depth and camera motion vectors ({}x{}) at the "
+                   "main view's color resolve {} of a frame",
+                   extent.width, extent.height, g.at);
+    } else {
+      ITC_LOG_ERROR("native renderer: gbuffer: couldn't create its resources; off");
+    }
+  }
+  if (!g.ready) {
+    return;
+  }
+  if (extent.width != g.extent.width || extent.height != g.extent.height) {
+    if (!g.logged_extent) {
+      g.logged_extent = true;
+      ITC_LOG_WARN("native renderer: gbuffer: the main view is {}x{}, its buffers {}x{}; "
+                   "skipped",
+                   extent.width, extent.height, g.extent.width, g.extent.height);
+    }
+    return;
+  }
+  float inverse[16];
+  if (!InvertMatrix(camera.view_projection, inverse)) {
+    g.has_previous = false;
+    return;
+  }
+  // A frame without the G-buffer in between: no motion to measure.
+  const bool has_previous = g.has_previous && g.built_frame + 1 == frame_serial;
+  struct {
+    float reprojection[16];  // row by row: read transposed by GLSL (see gbuffer.frag)
+    float inverse_w[4];
+    float extent[2];
+    int32_t has_previous;
+  } constants{};
+  static_assert(sizeof(constants) == 92);
+  // GLSL computes previous^T * inverse^T * ndc = (inverse * previous)^T * ndc.
+  MultiplyMatrices(inverse, has_previous ? g.previous : camera.view_projection,
+                   constants.reprojection);
+  for (int r = 0; r < 4; r++) {
+    constants.inverse_w[r] = inverse[r * 4 + 3];
+  }
+  constants.extent[0] = float(extent.width);
+  constants.extent[1] = float(extent.height);
+  constants.has_previous = has_previous ? 1 : 0;
+
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  alloc.descriptorPool = resolve_pools[frame];
+  alloc.descriptorSetCount = 1;
+  alloc.pSetLayouts = &resolve_set_layout;
+  if (vk::vkAllocateDescriptorSets(context.device, &alloc, &set) != VK_SUCCESS) {
+    return;
+  }
+  const VkImageLayout read_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  VkDescriptorImageInfo image_info{resolve_sampler, depth->sample_view, read_layout};
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet = set;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo = &image_info;
+  vk::vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
+
+  EndRendering(commands);
+  Transition(commands, depth->image.image, depth->aspects(), depth->layout, read_layout);
+  Transition(commands, g.depth.image, VK_IMAGE_ASPECT_COLOR_BIT, g.depth_layout,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  Transition(commands, g.velocity.image, VK_IMAGE_ASPECT_COLOR_BIT, g.velocity_layout,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  VkRenderingAttachmentInfo attachments[2];
+  const VkImageView views[2] = {g.depth.view, g.velocity.view};
+  for (uint32_t i = 0; i < 2; i++) {
+    attachments[i] = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    attachments[i].imageView = views[i];
+    attachments[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;  // every pixel is written
+    attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  }
+  VkRect2D area{{0, 0}, extent};
+  VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+  info.renderArea = area;
+  info.layerCount = 1;
+  info.colorAttachmentCount = 2;
+  info.pColorAttachments = attachments;
+  vk::vkCmdBeginRendering(commands, &info);
+  VkViewport viewport{0.0f, 0.0f, float(extent.width), float(extent.height), 0.0f, 1.0f};
+  vk::vkCmdSetViewport(commands, 0, 1, &viewport);
+  vk::vkCmdSetScissor(commands, 0, 1, &area);
+  vk::vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        depth->samples == VK_SAMPLE_COUNT_1_BIT ? g.build_pipeline
+                                                                : g.build_pipeline_ms);
+  vk::vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, g.build_layout, 0, 1,
+                              &set, 0, nullptr);
+  vk::vkCmdPushConstants(commands, g.build_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(constants), &constants);
+  vk::vkCmdDraw(commands, 3, 1, 0, 0);
+  vk::vkCmdEndRendering(commands);
+  recorded.valid = false;
+  Transition(commands, g.depth.image, VK_IMAGE_ASPECT_COLOR_BIT, g.depth_layout,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  Transition(commands, g.velocity.image, VK_IMAGE_ASPECT_COLOR_BIT, g.velocity_layout,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  // The depth target goes back to drawing at the next BeginRendering.
+
+  std::memcpy(g.previous, camera.view_projection, sizeof(g.previous));
+  g.has_previous = true;
+  g.built_frame = frame_serial;
+}
+
+void Passes::State::DrawGBufferDebug(VkCommandBuffer commands, Target& target, VkExtent2D extent) {
+  GBuffer& g = gbuffer;
+  if (!g.ready || g.debug <= 0 || g.built_frame != frame_serial) {
+    return;
+  }
+  // The game's own velocity buffer (mode 3): half the main view, 16_16.
+  Target* game_velocity = nullptr;
+  for (auto& [key, t] : targets) {
+    if (!t.depth && t.image.image && t.format == VK_FORMAT_R16G16_SFLOAT &&
+        t.guest_extent.width >= kMainViewWidth / 2 &&
+        t.guest_extent.width <= kMainViewWidth / 2 + 32 &&
+        t.guest_extent.height >= kMainViewHeight / 2) {
+      game_velocity = &t;
+      break;
+    }
+  }
+  auto [it, added] = g.debug_pipelines.try_emplace({target.format, target.samples},
+                                                   VK_NULL_HANDLE);
+  if (added) {
+    it->second = MakeFullscreenPipeline(g.debug_pixel, g.debug_layout, target.format,
+                                        target.samples);
+  }
+  if (!it->second) {
+    return;
+  }
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  alloc.descriptorPool = resolve_pools[frame];
+  alloc.descriptorSetCount = 1;
+  alloc.pSetLayouts = &g.debug_set_layout;
+  if (vk::vkAllocateDescriptorSets(context.device, &alloc, &set) != VK_SUCCESS) {
+    return;
+  }
+  EndRendering(commands);
+  VkImageView game_view = g.velocity.view;
+  float game_uv_scale[2] = {1.0f, 1.0f};
+  if (game_velocity && game_velocity->samples == VK_SAMPLE_COUNT_1_BIT) {
+    Transition(commands, game_velocity->image.image, VK_IMAGE_ASPECT_COLOR_BIT,
+               game_velocity->layout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    game_view = game_velocity->image.view;
+    game_uv_scale[0] = float(kMainViewWidth / 2) * game_velocity->scale /
+                       float(game_velocity->extent.width);
+    game_uv_scale[1] = float(kMainViewHeight / 2) * game_velocity->scale /
+                       float(game_velocity->extent.height);
+  }
+  VkDescriptorImageInfo images[3] = {
+      {resolve_sampler, g.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+      {resolve_sampler, g.velocity.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+      {resolve_sampler, game_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet = set;
+  write.dstBinding = 0;
+  write.descriptorCount = 3;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo = images;
+  vk::vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
+
+  Transition(commands, target.image.image, VK_IMAGE_ASPECT_COLOR_BIT, target.layout,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  VkRenderingAttachmentInfo attachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+  attachment.imageView = target.image.view;
+  attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  VkRect2D area{{0, 0}, extent};
+  VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+  info.renderArea = area;
+  info.layerCount = 1;
+  info.colorAttachmentCount = 1;
+  info.pColorAttachments = &attachment;
+  vk::vkCmdBeginRendering(commands, &info);
+  VkViewport viewport{0.0f, 0.0f, float(extent.width), float(extent.height), 0.0f, 1.0f};
+  vk::vkCmdSetViewport(commands, 0, 1, &viewport);
+  vk::vkCmdSetScissor(commands, 0, 1, &area);
+  vk::vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, it->second);
+  vk::vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, g.debug_layout, 0, 1,
+                              &set, 0, nullptr);
+  struct {
+    float extent[2];
+    float game_uv_scale[2];
+    int32_t mode;
+    float depth_range;
+    float velocity_scale;
+  } constants{{float(extent.width), float(extent.height)},
+              {game_uv_scale[0], game_uv_scale[1]},
+              g.debug,
+              g.depth_range,
+              g.velocity_scale};
+  static_assert(sizeof(constants) == 28);
+  vk::vkCmdPushConstants(commands, g.debug_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(constants), &constants);
+  vk::vkCmdDraw(commands, 3, 1, 0, 0);
+  vk::vkCmdEndRendering(commands);
+  recorded.valid = false;
+}
+
 VkPipeline Passes::State::GetResolvePipeline(VkFormat format, bool multisample) {
   auto [it, added] = resolve_pipelines.try_emplace({format, multisample}, VK_NULL_HANDLE);
   if (!added) {
@@ -3486,7 +3883,12 @@ VkPipeline Passes::State::GetResolvePipeline(VkFormat format, bool multisample) 
 }
 
 VkPipeline Passes::State::MakeFullscreenPipeline(VkShaderModule pixel, VkPipelineLayout layout,
-                                                 VkFormat format, VkSampleCountFlagBits samples) {
+                                                 VkFormat format, VkSampleCountFlagBits samples,
+                                                 uint32_t count, const VkFormat* formats) {
+  if (!formats) {
+    formats = &format;
+    count = 1;
+  }
   VkPipelineShaderStageCreateInfo stages[2] = {};
   for (VkPipelineShaderStageCreateInfo& stage : stages) {
     stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
@@ -3512,18 +3914,21 @@ VkPipeline Passes::State::MakeFullscreenPipeline(VkShaderModule pixel, VkPipelin
   VkPipelineMultisampleStateCreateInfo multisample_state{
       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
   multisample_state.rasterizationSamples = samples;
-  VkPipelineColorBlendAttachmentState attachment{};
-  attachment.colorWriteMask = 0xF;
+  std::vector<VkPipelineColorBlendAttachmentState> attachments(count);
+  for (VkPipelineColorBlendAttachmentState& attachment : attachments) {
+    attachment = {};
+    attachment.colorWriteMask = 0xF;
+  }
   VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  blend.attachmentCount = 1;
-  blend.pAttachments = &attachment;
+  blend.attachmentCount = count;
+  blend.pAttachments = attachments.data();
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
   dynamic.dynamicStateCount = 2;
   dynamic.pDynamicStates = dynamic_states;
   VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-  rendering.colorAttachmentCount = 1;
-  rendering.pColorAttachmentFormats = &format;
+  rendering.colorAttachmentCount = count;
+  rendering.pColorAttachmentFormats = formats;
   VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
   info.pNext = &rendering;
   info.stageCount = 2;
@@ -5250,7 +5655,11 @@ void Passes::State::Resolve(VkCommandBuffer commands, uint8_t* base, uint32_t de
     // race frame's passes"). CMAA2 goes before that one by default, so the
     // bloom, the motion blur and the combine all read the anti-aliased
     // scene.
-    if (++main_view_resolves == cmaa2_at) {
+    ++main_view_resolves;
+    if (gbuffer.enabled && main_view_resolves == gbuffer.at) {
+      BuildGBuffer(commands, base, device);
+    }
+    if (main_view_resolves == cmaa2_at) {
       // Its drawn part; HDR stored at 8x (the resolves' exponent bias -3).
       const VkExtent2D extent{std::min(main_view_extent.width, source->extent.width),
                               std::min(main_view_extent.height, source->extent.height)};
@@ -5501,6 +5910,16 @@ void Passes::set_anti_aliasing(bool cmaa2, bool fxaa, uint32_t at, bool debug,
   state_->cmaa2 = cmaa2;
   state_->fxaa = fxaa;
   state_->cmaa2_at = at;
+}
+
+void Passes::set_gbuffer(bool enabled, uint32_t at, int32_t debug, float depth_range,
+                         float velocity_scale) {
+  State::GBuffer& g = state_->gbuffer;
+  g.enabled = enabled;
+  g.at = std::max(at, 1u);
+  g.debug = enabled ? std::clamp(debug, 0, 4) : 0;
+  g.depth_range = depth_range > 0 ? depth_range : 500.0f;
+  g.velocity_scale = velocity_scale;
 }
 
 void Passes::set_record_draws(bool record) {
@@ -5998,11 +6417,13 @@ VkExtent2D Passes::EndFrame(VkCommandBuffer commands, int32_t show_resolve, bool
   } else if (Target* front = s.front) {
     // The frame as the game resolves it to the front buffer.
     s.EndRendering(commands);
-    Transition(commands, front->image.image, front->aspects(), front->layout,
-               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkExtent2D front_extent = s.Scaled(s.front_extent);
     extent = {std::min({front_extent.width, front->extent.width, s.shown_extent.width}),
               std::min({front_extent.height, front->extent.height, s.shown_extent.height})};
+    // --gbuffer_debug: a G-buffer view drawn over the frame first.
+    s.DrawGBufferDebug(commands, *front, extent);
+    Transition(commands, front->image.image, front->aspects(), front->layout,
+               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if (front->samples == VK_SAMPLE_COUNT_1_BIT) {
       VkImageBlit blit{};
       blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};

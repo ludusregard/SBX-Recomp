@@ -10,13 +10,23 @@
 
 namespace native {
 
+// The camera a command list was recorded with (camera pass 0's
+// view-projection, the game's row-vector matrix, row by row), for our own
+// passes that need it (--gbuffer). Not valid outside races.
+struct ListCamera {
+  bool valid = false;
+  float view_projection[16] = {};
+};
+
 // Main thread, as a pass's command list is handed to the render thread
-// (before Renderer::WaitForFrame): whether a logic pass recorded it. Render
-// thread, as a frame's replay starts: takes the next list's. Then whether
-// the list being replayed came from a logic pass (--native_renderer_mirror_by_tick).
-void Renderer_OnListHandedOver(bool logic_pass);
+// (before Renderer::WaitForFrame): whether a logic pass recorded it, and its
+// camera. Render thread, as a frame's replay starts: takes the next list's.
+// Then whether the list being replayed came from a logic pass
+// (--native_renderer_mirror_by_tick), and its camera.
+void Renderer_OnListHandedOver(bool logic_pass, const ListCamera& camera = {});
 void Renderer_OnReplayStart();
 bool Renderer_ReplayingLogicList();
+ListCamera Renderer_ReplayingCamera();
 // Since the last call: frames replayed with no list handed over, and the
 // most lists waiting at a frame's start.
 void Renderer_TakeListStats(uint64_t& missing, uint64_t& most);

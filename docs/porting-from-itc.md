@@ -10,9 +10,10 @@ of the repo describes SBX on its own.
 A checkout of ITC-Recomp is a read-only reference. Its location is the
 user's; tools take it as an argument (`<ITC-Recomp>` below).
 
-Last reviewed: ITC-Recomp `d07959f` (2026-10-19). The session-start check
-in `CLAUDE.md` reports what changed upstream since this commit, then
-moves it forward.
+Last reviewed: ITC-Recomp `565fde5` (`rexglue-removal-project`, 2026-11-07;
+reviewed 2026-11-08, the 775 commits since `e20b6ef`: `docs/itc-parity.md`,
+"Phase 4"). The session-start check in `CLAUDE.md` reports what changed
+upstream since this commit, then moves it forward.
 
 ## How the two line up
 
@@ -236,3 +237,7 @@ Regenerate (from `sbx_recomp/`):
 hard-coded for ITC), drops candidates inside `.pdata` functions and XEX
 import thunks, and accepts candidates on `.pdata` boundaries
 (`docs/codegen.md`). The other copied scripts use this project's names.
+
+`port_native.py` (ours) rewrites the guest addresses in ITC's source
+through the matches and grades them (`docs/itc-parity.md`, "Phase 4"), so
+ITC's C++ can be read with SBX's addresses. Its output isn't built in.

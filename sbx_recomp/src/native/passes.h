@@ -110,6 +110,14 @@ class Passes {
   // 1 the corners) to full at `outer`. `strength` is the blur's share (0-1;
   // 0 off).
   void set_frame_blend(float strength, float inner, float outer, float shutter);
+  // G-buffer lite (--gbuffer; BuildGBuffer in passes.cpp): at the main
+  // view's `at`-th color resolve of a frame (1: the opaque scene), its depth
+  // into buffers of our own (depth and view distance; the camera's motion
+  // vectors). debug (--gbuffer_debug): draw one over the frame (1 view
+  // distance up to depth_range, 2 velocity times velocity_scale, 3 the game's
+  // own velocity buffer, 4 the depth as drawn; 0 off).
+  void set_gbuffer(bool enabled, uint32_t at, int32_t debug, float depth_range,
+                   float velocity_scale);
   // For set_skip_pixel_shader: skip the draws without a pixel shader.
   static constexpr uint64_t kSkipNoPixelShader = 1;
   void set_record_draws(bool record);

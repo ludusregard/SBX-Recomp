@@ -9,8 +9,10 @@
 
 #include "base/flags.h"
 #include "base/log.h"
+#include "base/settings_file.h"
 #include "generated_overlay_font.h"
 #include "gpu_memory.h"
+#include "hooks/patch_loader.h"
 
 #define IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 #include <imgui.h>
@@ -26,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -66,6 +69,19 @@ size_t g_frame_ms_next = 0;
 
 // The panel's accent, #cdeb43, in place of ImGui's blue.
 constexpr ImVec4 kAccent{0.804f, 0.922f, 0.263f, 1.0f};
+constexpr ImVec4 kWarning{1.0f, 0.75f, 0.3f, 1.0f};
+constexpr ImVec4 kError{1.0f, 0.4f, 0.35f, 1.0f};
+
+// Saving (settings_file.h). Flags changed in this menu are written by Save;
+// the rest of the file is left alone, so a value from the command line or
+// the environment isn't saved unless it's changed here.
+std::set<std::string> g_changed;
+// Values for init-only flags, which can't change while the game runs: kept
+// here, saved, and used from the next start.
+std::map<std::string, std::string> g_next_start;
+bool g_unsaved = false;
+std::string g_save_status;
+bool g_save_failed = false;
 
 // The settings' tabs, in order (the renderer's own tab comes after them).
 constexpr std::array<const char*, 6> kTabs = {"Graphics", "Fixes",   "Hooks",
@@ -76,10 +92,23 @@ constexpr std::array<const char*, 6> kTabs = {"Graphics", "Fixes",   "Hooks",
 // carry their own lifecycle.
 const std::set<std::string> kStartOnly = {
     "width",           "height",          "fullscreen",       "msaa",
-    "native_audio",    "native_xma",      "gpu_plugin",       "cmaa2_threshold",
+    "gpu_plugin",      "cmaa2_threshold",
     "native_renderer_validation",         "native_renderer_dump",
     "play_movies_with_ffmpeg", "overlay_font",
+    "language",        "font_quality",
 };
+
+// Short notices (Notify): shown at the top of the screen for a few seconds,
+// whether or not the panels are open. Set from any thread.
+std::mutex g_notice_mutex;
+std::string g_notice;
+std::chrono::steady_clock::time_point g_notice_until{};
+constexpr auto kNoticeTime = std::chrono::seconds(3);
+
+bool NoticeShown() {
+  std::lock_guard lock(g_notice_mutex);
+  return !g_notice.empty() && std::chrono::steady_clock::now() < g_notice_until;
+}
 
 // The window an input or window event is for (0 for others: the gamepads'
 // and the like, which the overlay doesn't take).
@@ -203,36 +232,81 @@ bool LoadFont(ImGuiIO& io, float size) {
   return false;
 }
 
+// Whether a flag only takes effect at the next start.
+bool AppliesOnRestart(const rex::cvar::FlagEntry& entry) {
+  return kStartOnly.count(entry.name) ||
+         entry.lifecycle == rex::cvar::Lifecycle::kRequiresRestart ||
+         entry.lifecycle == rex::cvar::Lifecycle::kInitOnly;
+}
+
+// A value chosen in the menu. Init-only flags keep it for the next start
+// (g_next_start); the rest are set now.
+void Apply(const rex::cvar::FlagEntry& entry, const std::string& value) {
+  if (entry.lifecycle == rex::cvar::Lifecycle::kInitOnly) {
+    std::string current = entry.getter ? entry.getter() : std::string();
+    if (value == current) {
+      g_next_start.erase(entry.name);
+    } else {
+      g_next_start[entry.name] = value;
+    }
+  } else if (!rex::cvar::SetFlagByName(entry.name, value)) {
+    ITC_LOG_WARN("settings: {} = {} wasn't accepted", entry.name, value);
+    return;
+  }
+  g_changed.insert(entry.name);
+  g_unsaved = true;
+}
+
 // One flag's row: its name (with a marker if it only applies on restart),
-// the description as a tooltip, and an editor by its type.
+// the description as a tooltip, an editor by its type, and a right-click
+// menu to reset it.
 void FlagRow(const rex::cvar::FlagEntry& entry) {
-  bool restart = kStartOnly.count(entry.name) ||
-                 entry.lifecycle == rex::cvar::Lifecycle::kRequiresRestart;
-  bool read_only = entry.lifecycle == rex::cvar::Lifecycle::kInitOnly;
+  bool restart = AppliesOnRestart(entry);
+  bool init_only = entry.lifecycle == rex::cvar::Lifecycle::kInitOnly;
+  auto next = g_next_start.find(entry.name);
+  bool pending = next != g_next_start.end();
   ImGui::PushID(entry.name.c_str());
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
-  if (restart || read_only) {
-    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s%s", entry.name.c_str(),
-                       read_only ? " (startup only)" : " (restart)");
+  if (restart) {
+    ImGui::TextColored(kWarning, "%s%s", entry.name.c_str(),
+                       pending    ? " (next start)"
+                       : init_only ? " (startup only)"
+                                   : " (restart)");
   } else {
     ImGui::TextUnformatted(entry.name.c_str());
   }
-  if (ImGui::IsItemHovered() && !entry.description.empty()) {
-    ImGui::SetTooltip("%s\nDefault: %s", entry.description.c_str(), entry.default_value.c_str());
+  if (ImGui::IsItemHovered()) {
+    std::string tip = entry.description;
+    if (!tip.empty()) {
+      tip += "\n";
+    }
+    tip += "Default: " + entry.default_value;
+    using rex::cvar::Source;
+    if (entry.source == Source::kCommandLine || entry.source == Source::kEnvironment) {
+      tip += "\nSet by a launch option, which wins over the settings file.";
+    }
+    if (init_only) {
+      tip += "\nRead once at startup: a change here is saved for the next start.";
+    }
+    tip += "\nRight-click to reset.";
+    ImGui::SetTooltip("%s", tip.c_str());
+  }
+  if (ImGui::BeginPopupContextItem("reset")) {
+    if (ImGui::MenuItem("Reset to default")) {
+      Apply(entry, entry.default_value);
+    }
+    ImGui::EndPopup();
   }
   ImGui::TableNextColumn();
   ImGui::SetNextItemWidth(-1.0f);
-  if (read_only) {
-    ImGui::BeginDisabled();
-  }
-  std::string value = entry.getter ? entry.getter() : std::string();
+  std::string value = pending ? next->second : entry.getter ? entry.getter() : std::string();
   using rex::cvar::FlagType;
   switch (entry.type) {
     case FlagType::Boolean: {
       bool on = value == "true" || value == "1";
       if (ImGui::Checkbox("##v", &on)) {
-        rex::cvar::SetFlagByName(entry.name, on ? "true" : "false");
+        Apply(entry, on ? "true" : "false");
       }
       break;
     }
@@ -248,7 +322,7 @@ void FlagRow(const rex::cvar::FlagEntry& entry) {
         if (entry.constraints.max) {
           number = std::min(number, int(*entry.constraints.max));
         }
-        rex::cvar::SetFlagByName(entry.name, std::to_string(number));
+        Apply(entry, std::to_string(number));
       }
       break;
     }
@@ -256,16 +330,49 @@ void FlagRow(const rex::cvar::FlagEntry& entry) {
       double number = std::atof(value.c_str());
       if (ImGui::InputDouble("##v", &number, 0.0, 0.0, "%.4f",
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
-        rex::cvar::SetFlagByName(entry.name, std::to_string(number));
+        Apply(entry, std::to_string(number));
       }
       break;
     }
     default: {
+      // --language: the folders found in ADDON_DATA/LANGUAGES/, by their
+      // language.xml names; --font_quality: hd or sd.
+      if (entry.name == "language" || entry.name == "font_quality") {
+        std::vector<std::pair<std::string, std::string>> options;  // value, label
+        if (entry.name == "language") {
+          options.push_back({"", "Automatic (EN if found, else JP)"});
+          bool has_jp = false;
+          for (const patch_loader::Language& language : patch_loader::Languages()) {
+            options.push_back({language.code, language.name + " (" + language.code + ")"});
+            has_jp |= language.code == "JP" || language.code == "jp";
+          }
+          if (!has_jp) {
+            options.push_back({"JP", "Japanese (JP, the disc's)"});
+          }
+        } else {
+          options = {{"hd", "HD"}, {"sd", "SD"}};
+        }
+        std::string shown = value;
+        for (const auto& [option, label] : options) {
+          if (option == value) {
+            shown = label;
+          }
+        }
+        if (ImGui::BeginCombo("##v", shown.c_str())) {
+          for (const auto& [option, label] : options) {
+            if (ImGui::Selectable(label.c_str(), option == value)) {
+              Apply(entry, option);
+            }
+          }
+          ImGui::EndCombo();
+        }
+        break;
+      }
       if (!entry.constraints.allowed_values.empty()) {
         if (ImGui::BeginCombo("##v", value.c_str())) {
           for (const std::string& option : entry.constraints.allowed_values) {
             if (ImGui::Selectable(option.c_str(), option == value)) {
-              rex::cvar::SetFlagByName(entry.name, option);
+              Apply(entry, option);
             }
           }
           ImGui::EndCombo();
@@ -277,13 +384,10 @@ void FlagRow(const rex::cvar::FlagEntry& entry) {
       char buffer[256];
       std::snprintf(buffer, sizeof(buffer), "%s", value.c_str());
       if (ImGui::InputText("##v", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        rex::cvar::SetFlagByName(entry.name, buffer);
+        Apply(entry, buffer);
       }
       break;
     }
-  }
-  if (read_only) {
-    ImGui::EndDisabled();
   }
   ImGui::PopID();
 }
@@ -345,8 +449,8 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"unlock_cut_cars", {"Hooks", "Cars"}},
       {"cut_car_wheels", {"Hooks", "Cars"}},
       {"cut_car_steelies", {"Hooks", "Cars"}},
-      {"native_audio", {"Hooks", "Audio"}},
-      {"native_xma", {"Hooks", "Audio"}},
+      {"audio_maxqframes", {"Hooks", "Audio"}},
+      {"audio_mute", {"Hooks", "Audio"}},
       {"custom_music", {"Hooks", "Audio"}},
       {"new_music_roll", {"Hooks", "Audio"}},
       {"custom_music_shuffle", {"Hooks", "Audio"}},
@@ -354,6 +458,54 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"custom_music_adaptive_volume", {"Hooks", "Audio"}},
       {"play_movies_with_ffmpeg", {"Hooks", "Movies"}},
       {"patch_loader", {"Hooks", "Patches"}},
+      {"language", {"Hooks", "Language"}},
+      {"font_quality", {"Hooks", "Language"}},
+      {"autosave", {"Hooks", "Saves"}},
+      {"native_accessories", {"Hooks", "Native Code"}},
+      {"native_car_makers", {"Hooks", "Native Code"}},
+      {"native_car_physics", {"Hooks", "Native Code"}},
+      {"native_car_specs", {"Hooks", "Native Code"}},
+      {"native_collision", {"Hooks", "Native Code"}},
+      {"native_course_scenery", {"Hooks", "Native Code"}},
+      {"native_data_files", {"Hooks", "Native Code"}},
+      {"native_data_load", {"Hooks", "Native Code"}},
+      {"native_data_tables", {"Hooks", "Native Code"}},
+      {"native_file_layer", {"Hooks", "Native Code"}},
+      {"native_framework", {"Hooks", "Native Code"}},
+      {"native_game_modes", {"Hooks", "Native Code"}},
+      {"native_load_poll", {"Hooks", "Native Code"}},
+      {"native_material_passes", {"Hooks", "Native Code"}},
+      {"native_menu_helpers", {"Hooks", "Native Code"}},
+      {"native_menu_sounds", {"Hooks", "Native Code"}},
+      {"native_race_hud", {"Hooks", "Native Code"}},
+      {"native_race_hud_object", {"Hooks", "Native Code"}},
+      {"native_race_scene", {"Hooks", "Native Code"}},
+      {"native_race_screens", {"Hooks", "Native Code"}},
+      {"native_race_sounds", {"Hooks", "Native Code"}},
+      {"native_race_states", {"Hooks", "Native Code"}},
+      {"native_replay_snapshots", {"Hooks", "Native Code"}},
+      {"native_save_data", {"Hooks", "Native Code"}},
+      {"native_save_interface", {"Hooks", "Native Code"}},
+      {"native_scene", {"Hooks", "Native Code"}},
+      {"native_scene_loaders", {"Hooks", "Native Code"}},
+      {"native_scene_models", {"Hooks", "Native Code"}},
+      {"native_screen_constructors", {"Hooks", "Native Code"}},
+      {"native_screen_objects", {"Hooks", "Native Code"}},
+      {"native_second_set", {"Hooks", "Native Code"}},
+      {"native_shader_objects", {"Hooks", "Native Code"}},
+      {"native_strings_and_font", {"Hooks", "Native Code"}},
+      {"native_texture_compression", {"Hooks", "Native Code"}},
+      {"native_track_zones", {"Hooks", "Native Code"}},
+      {"native_ui_movies", {"Hooks", "Native Code"}},
+      {"native_vehicle", {"Hooks", "Native Code"}},
+      {"log_autosave", {"Logging", "Game"}},
+      {"half_pixel_offset", {"Vulkan", "Renderer"}},
+      {"dump_shaders", {"Logging", "Native Renderer"}},
+      {"gbuffer", {"Graphics", "G-Buffer"}},
+      {"gbuffer_resolve", {"Graphics", "G-Buffer"}},
+      {"gbuffer_debug", {"Graphics", "G-Buffer"}},
+      {"gbuffer_debug_depth_range", {"Graphics", "G-Buffer"}},
+      {"gbuffer_debug_velocity_scale", {"Graphics", "G-Buffer"}},
       {"log_boot_modes", {"Logging", "Game"}},
       {"log_file_opens", {"Logging", "Game"}},
       {"log_bgm", {"Logging", "Game"}},
@@ -385,23 +537,15 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
   if (name.starts_with("native_renderer_")) {
     return {"Vulkan", "Debugging"};
   }
-  if (entry.category == "UI/Vulkan") {
-    return {"Vulkan", "Presentation"};
-  }
-  if (entry.category == "GPU/Vulkan") {
-    return {"Vulkan", "Renderer"};
-  }
-  if (entry.category == "UI/Presenter") {
-    return {"ReXGlue", "Presenter"};
-  }
-  if (entry.category == "UI/Window" || entry.category == "Display") {
-    return {"ReXGlue", "Window"};
-  }
-  if (entry.category == "Audio") {
-    return {"ReXGlue", "Audio"};
-  }
-  if (entry.category == "GPU") {
-    return {"ReXGlue", "GPU"};
+  // The SDK's window, presenter, GPU emulation and audio driver settings: our
+  // renderer and audio replace those parts, so these change nothing here and
+  // aren't shown. (Those of them our code does read are named above.)
+  static const std::set<std::string> kUnused = {
+      "UI/Window", "Display",    "UI/Presenter", "UI/Vulkan", "UI/D3D12",
+      "GPU",       "GPU/Vulkan", "GPU/D3D12",    "GPU/Shader", "Audio",
+  };
+  if (kUnused.count(entry.category)) {
+    return {};
   }
   if (entry.category == "SBX") {
     return {"Hooks", "Other"};
@@ -420,12 +564,22 @@ std::map<std::string, Groups> Layout() {
       continue;
     }
     Place place = PlaceFlag(entry);
+    if (place.tab.empty()) {
+      continue;
+    }
     tabs[place.tab][place.group].push_back(&entry);
   }
+  // By name, but for these, in this order at the top of their group.
+  static const std::map<std::string, int> kFirst = {{"width", 0}, {"height", 1}};
+  auto rank = [](const rex::cvar::FlagEntry* e) {
+    auto it = kFirst.find(e->name);
+    return it != kFirst.end() ? it->second : int(kFirst.size());
+  };
   for (auto& [tab, groups] : tabs) {
     for (auto& [group, flags] : groups) {
-      std::sort(flags.begin(), flags.end(),
-                [](const auto* a, const auto* b) { return a->name < b->name; });
+      std::sort(flags.begin(), flags.end(), [&](const auto* a, const auto* b) {
+        return std::pair(rank(a), a->name) < std::pair(rank(b), b->name);
+      });
     }
   }
   return tabs;
@@ -451,6 +605,9 @@ void SearchResults(const std::string& search) {
     if (entry.type == rex::cvar::FlagType::Command) {
       continue;
     }
+    if (PlaceFlag(entry).tab.empty()) {
+      continue;
+    }
     if (Lower(entry.name).find(search) != std::string::npos ||
         Lower(entry.description).find(search) != std::string::npos) {
       found.push_back(&entry);
@@ -460,6 +617,66 @@ void SearchResults(const std::string& search) {
             [](const auto* a, const auto* b) { return a->name < b->name; });
   ImGui::Text("%zu settings match", found.size());
   FlagTable(found);
+}
+
+// Writes the flags changed in this menu to the settings file.
+void SaveSettings() {
+  std::vector<settings_file::Entry> entries;
+  bool restart = false;
+  for (const rex::cvar::FlagEntry& entry : rex::cvar::GetRegistry()) {
+    if (entry.type == rex::cvar::FlagType::Command || !g_changed.count(entry.name)) {
+      continue;
+    }
+    auto next = g_next_start.find(entry.name);
+    std::string value = next != g_next_start.end() ? next->second
+                        : entry.getter              ? entry.getter()
+                                                    : std::string();
+    Place place = PlaceFlag(entry);
+    settings_file::Entry& saved = entries.emplace_back();
+    saved.name = entry.name;
+    saved.value = settings_file::TOMLValue(entry.type, value);
+    saved.is_default = value == entry.default_value;
+    saved.section = place.tab + " / " + place.group;
+    restart |= AppliesOnRestart(entry);
+  }
+  std::string file = settings_file::Path().filename().string();
+  std::string error;
+  if (!settings_file::Save(entries, error)) {
+    ITC_LOG_ERROR("settings: {}", error);
+    g_save_status = "Not saved: " + error;
+    g_save_failed = true;
+    return;
+  }
+  g_unsaved = false;
+  g_save_failed = false;
+  g_save_status = entries.empty() ? "Nothing changed to save"
+                                  : "Saved to " + file +
+                                        (restart ? " (marked settings apply after a restart)" : "");
+}
+
+// The Save button and what happened last.
+void SaveBar() {
+  std::string file = settings_file::Path().filename().string();
+  if (ImGui::Button("Save")) {
+    SaveSettings();
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Writes the settings changed here to %s next to sbx.exe,\n"
+                      "loaded at every start. Launch options still win over it.",
+                      file.c_str());
+  }
+  ImGui::SameLine();
+  if (g_unsaved) {
+    ImGui::TextColored(kAccent, "Unsaved changes");
+  } else if (!g_save_status.empty()) {
+    if (g_save_failed) {
+      ImGui::TextColored(kError, "%s", g_save_status.c_str());
+    } else {
+      ImGui::TextDisabled("%s", g_save_status.c_str());
+    }
+  } else {
+    ImGui::TextDisabled("Settings file: %s", file.c_str());
+  }
 }
 
 float AverageFrameMs() {
@@ -506,6 +723,30 @@ void Hud() {
   ImGui::End();
 }
 
+void Notice() {
+  std::string text;
+  {
+    std::lock_guard lock(g_notice_mutex);
+    if (g_notice.empty() || std::chrono::steady_clock::now() >= g_notice_until) {
+      return;
+    }
+    text = g_notice;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  float pad = ImGui::GetFontSize() * 0.6f;
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                 viewport->WorkPos.y + pad),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.7f);
+  if (ImGui::Begin("##notice", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs)) {
+    ImGui::TextUnformatted(text.c_str());
+  }
+  ImGui::End();
+}
+
 void Panels(const FrameInfo& frame) {
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.05f,
@@ -518,6 +759,7 @@ void Panels(const FrameInfo& frame) {
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##search", "search every setting", g_search, sizeof(g_search));
     ImGui::TextDisabled("Changes apply at once, except those marked; Enter applies a text field.");
+    SaveBar();
     std::string search = Lower(g_search);
     if (!search.empty()) {
       SearchResults(search);
@@ -670,7 +912,7 @@ void OnEvent(const SDL_Event& event, SDL_WindowID our_window) {
 }
 
 bool Visible() {
-  return g_ready && (g_panels || g_hud);
+  return g_ready && (g_panels || g_hud || NoticeShown());
 }
 
 void OnFrame(const FrameInfo& frame) {
@@ -683,7 +925,7 @@ void Draw(VkCommandBuffer commands, VkImageView view, VkExtent2D extent, const F
     return;
   }
   bool panels = g_panels;
-  if (!panels && !g_hud) {
+  if (!panels && !g_hud && !NoticeShown()) {
     return;
   }
   ImGuiIO& io = ImGui::GetIO();
@@ -715,6 +957,7 @@ void Draw(VkCommandBuffer commands, VkImageView view, VkExtent2D extent, const F
   if (g_hud) {
     Hud();
   }
+  Notice();
   if (panels) {
     Panels(frame);
   }
@@ -736,6 +979,12 @@ void Draw(VkCommandBuffer commands, VkImageView view, VkExtent2D extent, const F
   vk::vkCmdBeginRendering(commands, &rendering);
   ImGui_ImplVulkan_RenderDrawData(data, commands);
   vk::vkCmdEndRendering(commands);
+}
+
+void Notify(const std::string& text) {
+  std::lock_guard lock(g_notice_mutex);
+  g_notice = text;
+  g_notice_until = std::chrono::steady_clock::now() + kNoticeTime;
 }
 
 }  // namespace native::overlay

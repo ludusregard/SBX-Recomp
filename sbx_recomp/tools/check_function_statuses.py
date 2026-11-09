@@ -29,8 +29,9 @@ DOC = os.path.join(ROOT, "docs", "functions.md")
 SRC = os.path.join(ROOT, "sbx_recomp", "src")
 
 OVERRIDE = re.compile(r'extern\s+"C"\s+REX_FUNC\((sub_[0-9A-F]{8})\)')
-# Overrides made by macros (NAME(address) macros that expand to REX_FUNC(sub_ are
-# found too: see overrides().
+# Overrides made by macros (NAME(address) macros that expand to REX_FUNC(sub_,
+# and NAME(sub_XXXXXXXX) macros that expand to REX_FUNC(name)) are found too:
+# see overrides().
 SUB = re.compile(r"sub_[0-9A-F]{8}")
 
 
@@ -52,6 +53,7 @@ def overrides():
     """sub_X -> (file, whether it calls __imp__sub_X)."""
     found = {}
     macros = {}  # name -> whether its body calls __imp__sub_##
+    named = {}  # the same, for macros given the whole sub_ name
     files = list(sources())
     for path, text in files:
         for m in OVERRIDE.finditer(text):
@@ -59,12 +61,21 @@ def overrides():
             found[sub] = (path, "__imp__" + sub in text)
         for m in DEFINE.finditer(text):
             body = m.group(3)
+            first = m.group(2).split(",")[0].strip()
             if re.search(r"REX_FUNC\(\s*sub_\s*##", body):
                 macros[m.group(1)] = bool(re.search(r"__imp__sub_\s*##", body))
+            elif first and re.search(r"REX_FUNC\(\s*" + re.escape(first) + r"\s*\)", body):
+                # NAME(sub_XXXXXXXX, ...): the whole name is the argument. Its
+                # fallback may be in another macro the body uses (FALLBACK(name)).
+                named[m.group(1)] = bool(re.search(r"__imp__\s*##\s*" + re.escape(first), body)
+                                         or re.search(r"FALLBACK\(\s*" + re.escape(first), body))
     for path, text in files:
         for name, calls in macros.items():
             for m in re.finditer(r"^\s*" + name + r"\(\s*(?:0x)?([0-9A-Fa-f]{8})\b", text, re.M):
                 found["sub_" + m.group(1).upper()] = (path, calls)
+        for name, calls in named.items():
+            for m in re.finditer(r"^\s*" + name + r"\(\s*(sub_[0-9A-F]{8})\b", text, re.M):
+                found[m.group(1)] = (path, calls)
     return found
 
 

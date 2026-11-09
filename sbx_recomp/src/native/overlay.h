@@ -2,7 +2,9 @@
 // onto the swapchain image after the frame is copied there, at the window's
 // own resolution. F4 shows the settings and renderer panels (the SDK's own
 // key for its settings overlay in the emulated GPU build), F3 a small
-// frame-rate readout (the SDK's debug overlay key).
+// frame-rate readout (the SDK's debug overlay key). The settings panel's Save
+// button writes what was changed in it to sbx.toml next to sbx.exe
+// (src/base/settings_file.h), loaded at every start.
 //
 // Threads: events arrive on the main thread (the SDK's event loop, through
 // an SDL event watch) and are queued; everything else runs on the render
@@ -54,6 +56,10 @@ void OnFrame(const FrameInfo& frame);
 
 // Render thread: whether anything is to be drawn this frame.
 bool Visible();
+
+// Any thread: shows `text` at the top of the screen for a few seconds
+// (an autosave's "Saved", say), panels open or not.
+void Notify(const std::string& text);
 
 // Render thread: builds this frame's panels and records them into `image`
 // (`view`, `extent`), which is in COLOR_ATTACHMENT_OPTIMAL. Does nothing

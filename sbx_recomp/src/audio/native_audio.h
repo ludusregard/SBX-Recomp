@@ -7,8 +7,8 @@
 
 namespace native_audio {
 
-// Puts our audio system in the runtime's config, unless --native_audio is
-// off. Called from SbxApp::OnPreSetup.
+// Puts our audio system in the runtime's config. Called from
+// SbxApp::OnPreSetup.
 void Configure(rex::RuntimeConfig& config);
 
 }  // namespace native_audio

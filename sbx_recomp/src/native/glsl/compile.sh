@@ -25,4 +25,7 @@ compile aa_in_frag aa_in.frag
 compile aa_in_ms_frag aa_in.frag -DMULTISAMPLE
 compile aa_out_frag aa_out.frag
 compile frame_blend_frag frame_blend.frag
+compile gbuffer_frag gbuffer.frag
+compile gbuffer_ms_frag gbuffer.frag -DMULTISAMPLE
+compile gbuffer_debug_frag gbuffer_debug.frag
 # CMAA2 (HLSL, through glslangValidator): python3 compile_cmaa2.py

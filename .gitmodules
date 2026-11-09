@@ -2,11 +2,6 @@
 	path = rexglue-sdk
 	url = https://github.com/rexglue/rexglue-sdk.git
 	ignore = dirty
-[submodule "SBXR_MOD"]
-	path = assets/PATCH_DATA/BUILD/TXR/BUILD
-	url = https://github.com/ludusregard/Shutoko-Battle-X-Restored.git
-	branch = gut_archive_files
-	shallow = true
 [submodule "sbx_recomp/thirdparty/FFmpeg"]
 	path = sbx_recomp/thirdparty/FFmpeg
 	url = https://github.com/FFmpeg/FFmpeg.git

@@ -21,6 +21,7 @@
 // again: findstr /n "DEFINE_REX_FUNC(sub_8218C240)" generated\default\*.cpp
 
 #include "guest.h"
+#include "hooks/autosave.h"
 #include "subtick/game_messages.h"
 
 #include <rex/cvar.h>
@@ -74,6 +75,9 @@ bool RaceLoaded(PPCContext& ctx, uint8_t* base) {
 extern "C" REX_FUNC(sub_8218C240) {
   REX_FUNC_PROLOGUE();
   uint32_t race = ctx.r3.u32;
+  // This is the garage top's load step (docs/menus.md): r3 is its handler
+  // object, which autosave watches.
+  hooks::Autosave_OnGarageTopLoadStep(race);
 
   uint64_t pass = 0;
   bool render_only = false;

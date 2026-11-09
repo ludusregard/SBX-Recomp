@@ -2,8 +2,8 @@
 
 What ITC-Recomp (the US release, Import Tuner Challenge, recompiled with the
 same SDK) changed, whether it applies to SBX, and in what order to bring it
-over. Written 2026-10-24 from ITC-Recomp's `main` checkout at
-`S:\Games\TXR_Modding\ITC_Recomp\git\ITC-Recomp` (its `src/`, its docs and
+over. Written 2026-10-24 from ITC-Recomp's `main` checkout
+(`<ITC-Recomp>`: its `src/`, its docs and
 `itc.toml`), with ITC addresses mapped to ours through
 `docs/itc_to_sbx_functions.tsv` (method and score given; "exact" and
 "calls 1.00" are safe, anything else is checked in `generated/` before use).
@@ -31,7 +31,7 @@ renderer are taken only where they're renderer-agnostic in substance.
 | `per_frame_logic.cpp` `sub_825A0548` (`--per_tick_ui_movie_tracks`) | UI movies' adding animation tracks ran on every frame (the pause sub-menus' arrow slid ~5x as far) | `sub_82585C40` (calls 0.97; same code but float constants), table `0x82973088`/ready `0x82973080` | Ported: `src/subtick/per_frame_logic.cpp`, always on with `--subtick` (no cvar) |
 | `hooks/title_screen.cpp` | `--skip_cutscenes`, `--attract_after_s`, `--log_boot_modes` | `82098DF0`, `820A4678`, `820AE840`, `82107D80` (exact), `8221FC48` (order 0.99; +36 and 600 checked); globals `0x8280DE3C`-`44` | Ported: `src/hooks/title_screen.cpp`. Changed from ITC: SBX's title screen plays its intro (Genki logos, warning) while it counts idle ticks, so the fast boot runs the title 590 ticks at once and then puts the idle count back to 0 (ITC kept the fast loop until the first race, which started the attract race straight away; with `--subtick` its load hung). `--log_boot_modes` also logs each handler set's state changes (`sub_82106410`) |
 | `hooks/create_file.cpp` | `--log_file_opens` | `82292F48` (exact) | Ported: `src/hooks/create_file.cpp` |
-| `hooks/voice.cpp` | Voice chat's 10 ms worker skipped (Xbox-only; CPU) | `825613F8` (order 0.87; the same code, checked) | Ported: `src/hooks/voice.cpp` (`--voice_thread=true` runs the original) |
+| `hooks/voice.cpp` | Voice chat's 10 ms worker skipped (Xbox-only; CPU) | `825613F8` (order 0.87; the same code, checked) | Ported: `src/hooks/voice.cpp`, always on (no cvar) |
 | `hooks/lights.cpp` (`--native_nearest_lights`) | `Lights::FindNearest` natively: 13% of ITC's main thread | `820F3FF8` (calls 1.00; the same code but the w constant, `0x82000A20`) | Ported: `src/hooks/lights.cpp`, always on (no cvar) |
 | `hooks/cockpit_dials.cpp` (`--native_cockpit_dials`) | Needles posed each frame from the tick's gauges | `820E3EB0`, `820E4178` | Not needed: it fixes ITC's renderer-side blending; SBX blends in game logic, so the dials are already right (the user's call, 2026-10-24) |
 | The race-exit timer (new, not in ITC) | The forced exit waits for the screen fades (`sub_82166940` posts message 49 once the four fade counts at `0x82694DBC`/`0x82694DC4` are 0), and the fades (`Fade::Update`, `sub_8209D250`) step once a call of the per-frame logic `sub_82107A38`, from Draw: at 60 fps the exit came twice as soon and cut the race-end music | `sub_82107A38`, `sub_8209D250`, `sub_82166940`; found with `--find_race_exit_target` and `--log_boot_modes` (the exit is message 49, ~20 passes after the race-end message 34) | Fixed: `src/subtick/per_frame_logic.cpp` puts the fade counts (and a countdown at `0x825F180C`) back after render-only passes; the stopgap and the diagnostics used to find it removed (confirmed by the user, 2026-10-24) |
@@ -67,14 +67,14 @@ ITC's `docs/native-audio.md`. Each layer replaces SDK emulation with our own
 code; none changes the game's audio logic.
 
 1. **Render driver** (ported 2026-10-24: `src/audio/native_audio.cpp`,
-   `output_mix.cpp`, `--native_audio`, on by default; the SDK's XMA
+   `output_mix.cpp`; always on since 2026-11-09, no flag; the SDK's XMA
    decoder kept, the SDL DLL patch applied in both builds): our
    SDL3 output thread instead of the SDK's Audio Worker (~80% of a core in
    ITC's profile). SBX: `AudioRenderDriver::Register/Submit/Destroy`
    `8244D0A0`/`8244D128`/`8244D188` (already in `functions.md`).
 2. **XMA decoding** (ported 2026-10-25, both builds: `src/audio/xma_stream.*`,
-   `xma_packets.*` as ITC's, `src/hooks/xma.cpp`, `--native_xma`, on by
-   default; working, the user's test 2026-10-25; FFmpeg's `xma2` from our build, now in both builds):
+   `xma_packets.*` as ITC's, `src/hooks/xma.cpp`; always on since
+   2026-11-09, no flag; working, the user's test 2026-10-25; FFmpeg's `xma2` from our build, now in both builds):
    the game's XMA objects are ours, each sound decoded into a flat buffer the
    voice reads; no XMA contexts, so the SDK's XMA decoder sits idle. SBX's 23
    helpers `82445678`-`82446490` (ITC's `8245C638`-`8245D4D0`; the TSV's
@@ -113,17 +113,266 @@ and system emulation under the game.
 
 ## Phase 4: native game code (ITC's B7)
 
-ITC translates the game's own subsystems to C++, verified by harnesses
-(`src/harnesses/`): C runtime and math, heap and std::string, matrix math,
-cameras, car physics, collision, track collision and route, model animation,
-UI movies, race overlays, sprites and billboards, strings and font, data
-tables and car specs, vehicle accessors, the command list, action mappers.
-Speed and SDK removal, not fixes. Each needs every function and data address
-remapped; the TSV covers functions, data needs `dataport.py`-style matching.
-Large; after phases 1-3.
+ITC translates the game's own subsystems to C++, each behind a
+`--native_*` flag whose adapters fall back to the recompiled function, and
+checks them with harnesses (`src/harnesses/`, `--run_harnesses=<name>`)
+that run the native and recompiled versions on the same inputs and compare.
+Speed and SDK removal, not fixes.
+
+### Review of 2026-11-08 (ITC `e20b6ef`..`565fde5`)
+
+775 commits on ITC's `rexglue-removal-project` (2026-10-25 to 11-07); its
+`main` has none since 2026-10-25. All but nine are its B7 loop (an agent
+loop: map a subsystem, migrate it to C++, validate with its harness and an
+attract race); the others are three merges, a docs commit, a car makers
+harness fix and four commits on a "conventional renderer" (`docs/conventional-renderer.md` there: native code
+feeding our own renderer interface instead of the game's Direct3D, resolves
+dropped, swappable backends; the plan, and GPU data moved out of guest
+memory). ITC counts 4,699
+native functions (up from 705 on 2026-10-22), in 107 source folders
+(about 11 MB of C++, 6 MB more in harnesses), with 682 adapters.
+
+No gameplay fixes came with it, so nothing in phases 1-3 changed.
+
+**How portable it is.** `tools/port_native.py` (new) rewrites every guest
+address in ITC's source (`sub_` names, `__imp__sub_`, `0x8...` constants,
+bare macro arguments, tables named `k8...`) through the function matches and
+the data map, and grades each (A exact, B high, C check, D none; see the
+script). Run over ITC's whole `itc_recomp/src` with the matches extended by
+`match_funcs.py --want` for the addresses it uses (379 of the 527 functions
+not in `itc_to_sbx_functions.tsv` found; only 125 of those at 0.95 or more):
+
+| | A | B | C | D |
+|---|---|---|---|---|
+| Addresses (distinct per folder) | 10,601 | 8,914 | 2,700 | 708 |
+| Native functions (`ITC_NATIVE_RUNNING`) | 1,973 | 1,637 | 549 | 85 |
+
+- Outside the harnesses, 468 distinct addresses have no match; most are in
+  `graphics`, `xact`, `xaudio`, `frame_passes`, `race_event` and
+  `post_effects`. The graphics ones are the Direct3D library, a different
+  revision here (`docs/native-renderer-port.md`), so they were expected.
+- A native function graded A has the same instructions with addresses
+  masked, so the same struct offsets and constants: its C++ is right here as
+  it is. B and C mean the code differs somewhere (as `Race::DrawStep`'s +64
+  vs +92); only the harnesses can say whether the C++ still holds.
+- After the rewrite, 478 of ITC's 512 non-harness, non-renderer `.cpp` files
+  pass a clang syntax check against SBX's generated headers and the SDK's
+  (2026-11-08). The 34 that don't fail on the unmatched addresses, files
+  SBX doesn't have yet (`main.cpp`, the movie player's headers) and the
+  audio and graphics library adapters.
+- 17 of ITC's overrides are functions SBX already overrides: the native
+  renderer's library hooks (`sub_8229BDA8`, `8229C1F8`, `822AB028`,
+  `822AC858`, `822B1450`, `822B1748`, `822B1888`, `82573538`, `82573638`,
+  `82575148`, `8257ACD0`, `825A3AE0`), subtick's (`sub_82092E60`
+  `Renderer::WaitForFrame`, `82106478` `GameMessages::Dispatch`, `82159540`
+  `Race::DrawStep`, `820A3B98` `CameraPass::Update`) and the patch loader's
+  (`sub_8209E348` `Archive::Init`). Each needs one merged version.
+- The folders depend on each other: 34 of them (the C runtime, archive,
+  cameras, collision, frame pacing, graphics...) include each other, so the
+  native layer comes over as one piece, not folder by folder. The only
+  folders that stand alone are `memory`, `helpers`, `command_list`,
+  `game_data`, `menu_sounds`, `scene_target` and `std_list`.
+
+### Done in SBX
+
+Written as SBX's own code from its generated code, with ITC's as the
+reference (`docs/native-code.md` has each flag's functions and what
+differs from ITC; `docs/functions.md`, "Native game code"):
+
+- 2026-11-08: `native_menu_sounds`, `native_data_files`, `native_framework`,
+  `native_car_specs` (off by default).
+- 2026-11-09: `native_menu_helpers`, `native_race_hud`, `native_data_tables`,
+  `native_file_layer`, `native_track_zones`, `native_race_scene` (the
+  user's test). Every flag on by default since then.
+- 2026-11-09, batch 3 (to test): `native_shader_objects`,
+  `native_screen_objects`, `native_scene_models`, `native_save_data`,
+  `native_accessories`, `native_strings_and_font`,
+  `native_screen_constructors`, `native_game_modes`. `race_flow` stays
+  recompiled (RaceFlow::Init copies stack words it never writes).
+- 2026-11-09, batch 4 (to test): `native_collision`, `native_car_physics`,
+  `native_vehicle`, `native_race_states`, `native_material_passes`,
+  `native_replay_snapshots`: each subsystem's set-ups, accessors, copies and
+  simple per-tick functions; the physics' step and solver, the race's
+  ticks and the replay's own save and restore stay recompiled.
+- 2026-11-09, batch 5 (to test): `native_ui_movies`, `native_data_load`,
+  `native_race_sounds`, `native_race_screens`, `native_race_hud_object`,
+  `native_course_scenery`.
+- 2026-11-09, batch 6 (to test): `native_scene_loaders`, `native_scene`,
+  `native_second_set`, `native_load_poll`, `native_car_makers`,
+  `native_texture_compression`, `native_save_interface`. `build_screen`
+  has no flag (its functions are the build screen's lists and draws).
+
+Batches 3 to 6 tested in play (the user, 2026-11-09). Held: memory,
+std_list, std_string (ITC's heap); command_list, sprites, scene_target (the
+renderer); helpers (the kernel calls, Phase 3).
+
+Where ITC's folders cover an address SBX already overrides, SBX's override
+stays and is the base. Each of the seven is a wrapper around the
+recompiled function (it watches, logs or reorders the call); ITC's version
+of each is the function's own work as C++ and adds no behavior of its own
+(read 2026-11-09). Merged so far, the wrapper calling our C++
+(`src/hooks/native_calls.h`) in place of the recompiled function, under its
+subsystem's flag:
+
+| Address | SBX's override | Ours, called from it | ITC's |
+|---|---|---|---|
+| `sub_82106410` StateMachine::Handle | `title_screen.cpp` (boot mode log, autosave) | `game_modes.cpp`, `native_game_modes` | `game_modes.cpp` |
+| `sub_8220F7B0` RivalLogo::Draw | `subtick/per_frame_logic.cpp` (the logo on render-only passes) | `race_hud.cpp`, `native_race_hud` | `race_hud.cpp` |
+| `sub_820F1038` TextureAnimations::Advance | `subtick/per_frame_logic.cpp` (skipped on render-only passes) | `course_scenery.cpp`, `native_course_scenery` | `course_scenery.cpp` |
+| `sub_82113FB0` Progress::SetDefaults | `unlock_cut_cars.cpp` (after it) | not yet | `save_data.cpp`: its three table copies through ITC's memcpy, the bits |
+| `sub_8228CEE8` GameData::Save | `autosave.cpp` (its log) | not yet | `save_layer.cpp`: the name's swprintf, the save request, on ITC's save layer |
+| `sub_8211D4B8` UiMovie::Update | subtick (the movies' adds once a tick) | not yet | `ui_movies/update.cpp`: the queue and time steps |
+| `sub_82585C40` UiMovie::ApplyTrack | subtick (the same) | not yet | `ui_movies/keys.cpp`: the keys' interpolation, float for float |
+
+The last four go with their subsystems' per-tick work (the UI movies) or
+ITC's layers SBX doesn't have yet (its save layer, its C runtime's
+swprintf).
+
+### Brought over, then taken out (2026-11-09)
+
+ITC's native layer at `565fde5` was merged into `src/` on 2026-11-08 (917
+files: the game code, its adapters and the harnesses) and taken out again
+the next day. It wasn't what was asked for: ITC is a reference for how the
+game works, not code to copy. Merged, it brought ITC's own diagnostics
+(`--log_overlay_uploads` and others), crashed in its overrides with
+`--ported_hooks` (QueryPerformanceCounter, `sub_8259F788`, given a null
+output pointer) and stopped in the harnesses at the first unmatched
+function (`xmp`, `sub_825894C8`).
+
+What stays from it: the one `sub_82106410` override (StateTable::Dispatch)
+in `hooks/title_screen.cpp`, which hands each dispatch to
+`hooks::Autosave_OnDispatch` (autosave and the boot mode log both overrode
+it), and `tools/port_native.py`, which rewrites ITC's source to SBX's
+addresses for reading.
+
+**How ITC is used now.** When we take on a subsystem: run `port_native.py`
+on ITC's folder for it, read the C++ (and its harness) with SBX's addresses
+in it, check what it says against SBX's own code and the game files, and
+write SBX's version in SBX's style, behind its own flag. Nothing of ITC's
+is compiled in. The table below says how cleanly each of ITC's folders
+reads at SBX's addresses.
+
+Regenerate the grading (from `sbx_recomp/`):
+
+    python tools\match_funcs.py <ITC-Recomp>\itc_recomp\generated\default generated\default -o matches_want.tsv --want <every address port_native.py reports D>
+    python tools\port_native.py <ITC-Recomp>\itc_recomp\generated\default generated\default matches_want.tsv <ITC-Recomp>\itc_recomp\src --report port_report.tsv --summary port_summary.md
+
+Per folder, on 2026-11-08 (addresses and native functions as A/B/C/D;
+Ready: "yes" every address A or B and every native function A, "harness"
+nothing unmatched but some native functions below A, "no" something
+unmatched):
+
+| Subsystem | Addresses A/B/C/D | Native functions A/B/C/D | Ready |
+|---|---|---|---|
+| accessories | 31/23/2/0 | 20/11/1/0 | harness |
+| action_mappers | 40/26/5/1 | 22/10/5/1 | no |
+| ai_drivers | 109/106/24/4 | 47/82/24/3 | no |
+| alt_hud | 34/19/2/1 | 15/6/0/0 | no |
+| app_start_up | 109/109/19/1 | 19/15/3/0 | no |
+| app_states | 108/28/1/2 | 37/16/1/0 | no |
+| archive | 40/11/2/1 | 19/5/1/0 | no |
+| audio | 3/0/2/1 | 0/0/0/0 | no |
+| boot_mode | 36/20/4/2 | 12/6/1/0 | no |
+| build_screen | 137/58/2/0 | 34/18/1/0 | harness |
+| c_runtime | 107/53/37/3 | 35/12/2/1 | no |
+| camera_modes | 102/225/35/9 | 36/40/6/6 | no |
+| cameras | 53/37/15/12 | 12/19/3/2 | no |
+| car_draw | 210/377/165/39 | 44/24/8/2 | no |
+| car_makers | 45/35/5/0 | 9/10/3/0 | harness |
+| car_models | 99/41/38/9 | 43/14/6/0 | no |
+| car_physics | 151/197/19/0 | 32/94/11/0 | harness |
+| car_scene_draw | 55/153/15/15 | 2/9/6/4 | no |
+| car_sounds | 85/77/30/4 | 13/36/10/3 | no |
+| car_specs | 38/9/1/0 | 32/7/0/0 | harness |
+| career | 37/19/0/5 | 32/18/0/3 | no |
+| collision | 39/44/7/0 | 23/37/4/0 | harness |
+| command_list | 7/3/3/0 | 0/0/0/0 | yes |
+| course_scenery | 109/35/4/0 | 52/9/0/0 | harness |
+| data_load | 41/27/1/0 | 9/10/0/0 | harness |
+| data_tables | 17/2/1/0 | 16/1/1/0 | harness |
+| debug | 52/38/8/4 | 0/0/0/0 | no |
+| display | 2/0/3/0 | 0/0/0/0 | yes |
+| file_layer | 9/14/0/0 | 4/7/0/0 | harness |
+| frame_pacing | 31/22/8/2 | 0/0/0/0 | no |
+| frame_passes | 21/81/3/2 | 5/4/1/0 | no |
+| framework | 45/32/19/0 | 29/24/3/0 | harness |
+| front_end_car_draw | 42/31/7/4 | 9/9/1/0 | no |
+| game_data | 1/0/0/0 | 1/0/0/0 | yes |
+| game_modes | 29/57/3/0 | 14/10/3/0 | harness |
+| graphics | 79/73/166/25 | 53/41/132/5 | no |
+| harnesses | 2352/1854/557/114 | 0/0/0/0 | no |
+| helpers | 15/6/1/0 | 3/0/1/0 | harness |
+| hooks | 2418/2051/691/270 | 6/15/0/0 | no |
+| input | 18/15/8/1 | 8/7/2/1 | no |
+| interpolation | 5/12/0/0 | 0/0/0/0 | yes |
+| load_poll | 49/29/0/0 | 25/7/0/0 | harness |
+| location_screen | 110/106/20/1 | 31/25/3/0 | no |
+| material_passes | 44/29/11/0 | 15/7/0/0 | harness |
+| matrix_math | 18/13/10/6 | 11/9/2/3 | no |
+| memory | 19/10/1/0 | 17/7/0/0 | harness |
+| menu_helpers | 23/0/0/0 | 2/0/0/0 | yes |
+| menu_sounds | 8/11/0/0 | 0/4/0/0 | harness |
+| minimap | 13/37/2/1 | 3/10/1/0 | no |
+| mode_tick | 44/32/3/2 | 9/7/0/0 | no |
+| model_animation | 11/25/20/1 | 6/18/17/1 | no |
+| models | 25/26/31/3 | 14/14/13/1 | no |
+| movies | 7/2/0/0 | 7/0/0/0 | yes |
+| native | 12/29/25/8 | 0/0/1/0 | no |
+| post_effects | 57/105/8/1 | 22/32/2/1 | no |
+| power_graph | 18/12/0/1 | 2/2/0/0 | no |
+| race_event | 65/51/2/1 | 58/42/0/0 | no |
+| race_flow | 5/10/0/0 | 0/1/0/0 | harness |
+| race_hud | 4/0/0/0 | 2/0/0/0 | yes |
+| race_hud_machine | 96/79/2/1 | 16/12/0/0 | no |
+| race_hud_object | 79/81/8/0 | 27/24/1/0 | harness |
+| race_loading | 25/13/12/1 | 6/3/1/0 | no |
+| race_overlays | 80/85/16/8 | 44/55/9/8 | no |
+| race_scene | 24/13/0/0 | 9/2/0/0 | harness |
+| race_screens | 277/69/1/0 | 67/25/0/0 | harness |
+| race_setup | 41/48/5/7 | 21/21/4/0 | no |
+| race_sounds | 128/42/2/0 | 24/7/0/0 | harness |
+| race_states | 70/37/0/0 | 30/13/0/0 | harness |
+| race_update | 27/7/24/2 | 2/2/3/0 | no |
+| race_world | 54/60/9/1 | 15/29/2/0 | no |
+| racer_controllers | 30/24/3/1 | 9/18/1/0 | no |
+| replay_snapshots | 21/30/3/0 | 12/13/1/0 | harness |
+| save_data | 21/14/1/0 | 9/9/1/0 | harness |
+| save_interface | 42/20/1/0 | 32/14/0/0 | harness |
+| scene | 31/20/2/0 | 11/10/2/0 | harness |
+| scene_loaders | 62/44/15/0 | 48/25/4/0 | harness |
+| scene_models | 42/16/2/0 | 18/10/2/0 | harness |
+| scene_target | 9/21/0/0 | 2/3/0/0 | harness |
+| scenery_lists | 44/49/16/4 | 9/12/4/1 | no |
+| screen_constructors | 9/59/7/0 | 4/33/4/0 | harness |
+| screen_objects | 31/17/1/0 | 23/16/0/0 | harness |
+| second_set | 138/120/2/0 | 96/57/0/0 | harness |
+| shader_objects | 7/12/5/0 | 3/4/2/0 | harness |
+| sound_cues | 19/16/2/3 | 13/14/2/3 | no |
+| sprites | 12/11/2/0 | 0/0/0/0 | yes |
+| stand_models | 38/18/1/1 | 18/9/0/0 | no |
+| std_list | 2/3/0/0 | 2/3/0/0 | harness |
+| std_string | 16/8/0/0 | 12/4/0/0 | harness |
+| strings_and_font | 28/40/3/0 | 17/15/0/0 | harness |
+| texture_compression | 56/69/3/0 | 16/7/1/0 | harness |
+| track_collision | 48/26/3/1 | 24/19/1/0 | no |
+| track_route | 41/10/0/1 | 33/7/0/0 | no |
+| track_zones | 95/6/1/0 | 18/4/0/0 | harness |
+| tuning_pages | 641/56/2/2 | 50/14/1/0 | no |
+| tuning_screen | 183/434/21/31 | 40/31/3/1 | no |
+| type67_modes | 176/191/21/3 | 46/43/4/1 | no |
+| ui_movies | 108/63/5/0 | 51/26/1/0 | harness |
+| user | 5/4/0/1 | 0/0/0/0 | no |
+| vehicle | 53/41/10/0 | 9/13/3/0 | harness |
+| vehicle_accessors | 66/67/9/1 | 52/67/9/1 | no |
+| xact | 43/135/174/40 | 26/64/83/19 | no |
+| xaudio | 90/189/260/43 | 38/69/121/14 | no |
+| **all** | 10601/8914/2700/708 | 1973/1637/549/85 | |
 
 ## Not brought over
 
+- **ITC's frame pacing, renderer, movies and audio** (`src/frame_pacing/`,
+  `src/native/`, `src/movies/`, `src/audio/`): subtick, our native
+  renderer, our movie player and our audio do these (Phase 4 above).
 - **ITC's interpolation** (`src/interpolation/`, the renderer's blend state):
   SBX's subtick does this in game logic, renderer-agnostic.
 - **The rival logo cutscene fix** (`sub_821594B8`): ITC's cutscene; no SBX

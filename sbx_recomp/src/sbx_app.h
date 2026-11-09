@@ -7,6 +7,7 @@
 #include <rex/rex_app.h>
 
 #include "audio/native_audio.h"
+#include "base/settings_file.h"
 #include "hooks/custom_music.h"
 #include "hooks/patch_loader.h"
 #ifdef SBX_VULKAN_RENDERER
@@ -25,16 +26,20 @@ class SbxApp : public rex::ReXApp {
         PPCImageConfig));
   }
 
+  // The settings file is sbx.toml next to sbx.exe (the SDK would name it
+  // after the window title). The SDK loads it right after this; the F4
+  // menu's Save button writes it (src/base/settings_file.h).
   void OnConfigurePaths(rex::PathConfig& paths) override {
     if (paths.game_data_root.empty()) {
         paths.game_data_root =
             rex::filesystem::GetExecutableFolder() / "assets";
     }
+    paths.config_path = rex::filesystem::GetExecutableFolder() / "sbx.toml";
+    settings_file::SetPath(paths.config_path);
   }
 
   // Our own audio output instead of the SDK's render driver and Audio Worker
-  // (src/audio/native_audio.cpp, from ITC-Recomp; --native_audio=false for
-  // the SDK's).
+  // (src/audio/native_audio.cpp, from ITC-Recomp).
   void OnPreSetup(rex::RuntimeConfig& config) override { native_audio::Configure(config); }
 
   // PATCH_DATA is looked for in the game data root (src/hooks/patch_loader.cpp),

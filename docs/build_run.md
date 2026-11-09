@@ -11,6 +11,16 @@ package_release.bat   rem release\sbx-vulkan.zip: sbx.exe, its DLLs and a launch
 ```
 
 - Build logs: `out\codegen.log`, `out\build_vulkan.log`.
+- Settings: `sbx.toml` next to `sbx.exe`, flat `name = value` lines the SDK
+  loads at every start (before `REX_<NAME>` variables and the command line,
+  which win over it). F4's Save button writes the settings changed in the menu
+  into it, keeping its other lines and comments (`src/base/settings_file.cpp`).
+  Init-only settings changed in F4 are saved for the next start. No
+  `[sections]`: the SDK reads `[Input]` + `mnk_mode` as `Input_mnk_mode`.
+  `run_vulkan.bat` makes the file on its first run with its old defaults
+  (fullscreen, mouse and keyboard, cutscenes skipped, `new_music_roll = 1`);
+  it only sets `REX_GAME_DATA_ROOT` itself now. Releases don't ship the file,
+  so an update unzipped over a game doesn't overwrite its settings.
 - The emulated GPU build (`build.bat`, `run.bat`, `run-debug.bat`) was removed on
   2026-10-26; `cull_emulated_build.ps1` deletes what's left of it. The SDK's Xenos
   plugin is no longer built.
@@ -36,6 +46,8 @@ package_release.bat   rem release\sbx-vulkan.zip: sbx.exe, its DLLs and a launch
   can exist, so search `src/` for it first. To change a function's code,
   copy its generated body into an override and edit it there
   (`src/hooks/post_race.cpp`): edits in `generated/` are overwritten.
+  Give each override a row in `docs/functions.md` and run
+  `python sbx_recomp/tools/check_function_statuses.py`.
 - "Call to invalid or unregistered function at guest address X" at run
   time: add `0xX = {}` under `[entrypoint.functions]` in
   `sbx_manifest.toml` and rebuild (`docs/codegen.md`).

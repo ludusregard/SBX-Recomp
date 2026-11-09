@@ -36,8 +36,9 @@ The game treats the two as one id space: an id below 23,009 is in `BUILD`,
 anything else is in `BUILD_CRS` at id - 23,009 (`sub_8209D988`,
 `sub_8209DF80`).
 
-`BUILD_CRS` is the game world for race mode, and only that: map assets,
-with no game logic data such as car stats. It's interchangeable with
+`BUILD_CRS` is the courses: the race map, a smaller course for race
+modes 8-10 and the front end's 3D scenes (see "Courses" below), with no
+game logic data such as car stats. It's interchangeable with
 Import Tuner Challenge's `BUILD_CRS` (whose world has different textures
 and advertising billboards), while `BUILD` isn't. Import Tuner
 Challenge's `BUILD_CRS.TOC` is the same size, so it has the same 1,359
@@ -219,6 +220,183 @@ if `n` is out of range; with its third argument set it also returns 0 for
 a file whose first word is 0. The light sets `Lights::FindNearest` reads
 are containers like this.
 
+## Courses (`BUILD_CRS`)
+
+Every `BUILD_CRS` id is part of a course, except the course shaders
+(24256-24367, see "Shaders"). A course is the world drawn and driven in
+a race or behind a front-end screen: a collision mesh, a route, a shared
+set of textures and models, and areas of models streamed in around the
+camera. The function names below are ITC-Recomp's for the same code in Import
+Tuner Challenge (addresses mapped with
+`docs/itc_to_sbx_functions.tsv`). "Confirmed" means read in this game's
+code and checked against this copy's `BUILD_CRS.TOC`; the `.DAT`'s
+contents haven't been dumped yet, so the formats inside the files are
+from the matched code only.
+
+### The course table (confirmed)
+
+A table in `.data` at `0x825F2E40` lists the courses: 24 entries of 8
+bytes, indexed by place x 3 + variant:
+
+```
++0  -> header: two ids (pool 0's and pool 1's asset; see below)
++4  -> course record:
+         +0   collision mesh id
+         +4   route id
+         +8   set file 2 id (areas, light groups)
+         +12  set file 1 id (textures, models)
+         +16  area count n
+         +20  n x 12 bytes: the area's light file id, its first and
+              last model id (every id from first to last is a model)
+```
+
+The headers and records sit just before the table, at
+`0x825F2B94`-`0x825F2E3C`. Changing a course's ids (or pointing an entry
+at a new record) is a change to this table.
+
+| Index | Place | Header ids | Record | Used for |
+|---|---|---|---|---|
+| 0-2 | 0 | 23009, 23010 | `0x825F2BA0`, `0x825F2BF0`, `0x825F2C40` | The race map, three variants |
+| 3-5 | 1 | 24130, 24131 | `0x825F2C98` (all three) | Race modes 8, 9 and 10 |
+| 6-11 | 2, 3 | 24165, 24166 | `0x825F2D50` (all six) | Front-end scenes 0 and 1 |
+| 12-14 | 4 | 24173, 24174 | `0x825F2D78`, `0x825F2D98`, `0x825F2DB8` | Front-end scene 2 |
+| 15-17 | 5 | 24199, 24200 | `0x825F2CC0`, `0x825F2CE0`, `0x825F2D00` | Front-end scene 3 |
+| 18-20 | 6 | 24225, 24226 | `0x825F2D28` (all three) | Front-end scene 4 |
+| 21-23 | 7 | 24233, 24234 | `0x825F2DE0`, `0x825F2E00`, `0x825F2E20` | Front-end scene 5 |
+
+How the index is picked:
+
+- **Races** (`sub_82159798` for the scenery, `TrackCollision::Load` for
+  the mesh and route): `sub_8228C478` (r3 x 3 + r4). Place 1 when the
+  race data's word +4 (`[0x826B580C]`) is 8, 9 or 10, with variant 0;
+  otherwise place 0, with the race data's +32 as the variant (0-2).
+  What the variant stands for isn't known yet.
+- **Front end** (`sub_82229DD8`): `sub_8228C488` ((r3 + 2) x 3 + r4). The
+  scene number comes from a table at `0x82626478` (16 bytes an entry:
+  three `BUILD` ids, then the scene number 0-5, indexed by a front-end
+  state's +852), the variant from a word +6104 (not traced).
+
+### The race map's ids (confirmed)
+
+Variant 0 (variants 1 and 2 have the same layout at +373 and +746:
+23384-23756 and 23757-24129):
+
+| Ids | What | Unpacked size |
+|---|---|---|
+| 23009 | Header: pool 0's asset (not loaded in races, see below) | 3,099,392 |
+| 23010 | Header: pool 1's asset (never loaded) | 292 |
+| 23011 | Collision mesh | 2,625,228 |
+| 23012 | Route | 3,090,984 |
+| 23013 | Set file 2 | 57,760 |
+| 23014, 23015-23091 | Area 0: light file, 77 models | |
+| 23092, 23093-23128 | Area 1: light file, 36 models | |
+| 23129, 23130-23205 | Area 2: light file, 76 models | |
+| 23206, 23207-23245 | Area 3: light file, 39 models | |
+| 23246, 23247-23382 | Area 4: light file, 136 models | |
+| 23383 | Set file 1 (stored, not compressed) | 113,337,296 |
+
+So the map is 5 areas of 364 models, all in one big world. The three
+variants have the same areas and model counts. Their meshes and routes
+have the same stored and unpacked sizes (probably the same files: one
+driving surface and one route for all three), while set file 1 (113.3, 110.4 and
+110.4 MB) and most models differ slightly: they're visual variants of one
+map.
+
+Place 1 (24130-24164) is a small course: mesh 24132, route 24133, set
+file 2 24134, one area (lights 24135, 28 models 24136-24163), set file 1
+24164 (23.9 MB). The front-end scenes have one area each and a
+placeholder mesh (8 bytes) and route (75 bytes).
+
+### How a course loads (confirmed)
+
+1. `Scenery::Create` (`sub_820F2E58`) makes the 248-byte scenery manager
+   and stores it at `0x826B51FC`; `Scenery::Init` (`sub_820F11F0`) stores
+   it again at `0x826B51F4`.
+2. The race (or the front end) fills a 44-byte configuration: +0 the mode
+   (0 everything loaded at once, as the front end does; otherwise
+   streamed, as races do), +24 the header, +28 the course record. Then
+   `Scenery::Setup` (`sub_820F2EF0`) and `Scenery::StartLoad`
+   (`sub_820F1C90`).
+3. `Scenery::SetupPools` (`sub_820F25B0`) copies the configuration to the
+   manager's +8 and builds two key tables from the record: the areas'
+   light files (+140: area, 0, id) and their models (+168: area, model,
+   id; `SceneryConfig::ModelAsset`, `sub_820F13C0`). Then five pools of
+   objects: 0 and 1 (60 bytes; on only when the manager's +44 and +48
+   are set, which races leave at 0), 2 the course set (3,824 bytes, one),
+   3 the areas' lights (88 bytes) and 4 the areas' models (560 bytes; at
+   most 16 at a time when streamed, sized by `Scenery::PoolSizes`,
+   `sub_820F1EC0`).
+4. `CourseSet::Load` (`sub_820F23B0`) loads set file 1 into a block of
+   its own and set file 2 into the object; `CourseSet::Parse`
+   (`sub_820F1900`) takes them apart, and set file 1's block is freed.
+5. Each update, `Scenery::Update` (`sub_820F4428`) lists the areas near
+   each camera (`Scenery::CollectAreas`, `sub_820F2F68`, by the areas'
+   corners in set file 2) and their models (`Scenery::CollectModels`,
+   `sub_820F31A0`), loads what's missing (`SceneryList::Stream`,
+   `sub_820F1550`) and lets go of what hasn't been seen for two updates.
+   `AreaLights::Load` (`sub_820F2188`) loads an area's light file;
+   `AreaModel::Load` (`sub_820F2250`) loads a model into the shared load
+   buffer, and `AreaModel::Parse` (`sub_820F10E8`) builds the model there.
+6. Once a race, `TrackCollision::Load` (`sub_820FF4B8`) loads the mesh
+   (`TrackMesh::Load`, `sub_820F7680`, to `0x826B57FC`) and the route
+   (`TrackRoute::Load`, `sub_820F9D08`, to `0x826B57F0`), each into a
+   block sized from the TOC.
+
+### Inside the course files (from the matched code)
+
+The set files, light files and models are containers (see "Containers"),
+like the `BUILD` model entries: this is why one TOC entry holds a whole
+group of files.
+
+| File | Entries |
+|---|---|
+| Set file 1 | 0 an XPR2 (the course's textures), 1 a model, 2-6 five lists of models, 7 another list |
+| Set file 2 | 0 the areas (a little-endian count; each area its four corners in x and z and 96-byte model records), 1 the light groups' textures and animations, 2 the light groups |
+| An area's light file | 0 the light set `Lights::FindNearest` reads |
+| An area's model | 0 the model (node and part files, see "Models"), 1 its XPR2 |
+
+The collision mesh: a table of sections, each a run of slices along the
+road with its vertices, triangles (with a surface kind) and walls (with a
+kind; `WallQuery::IgnoresWall`, `sub_820FD5A8`, skips some kinds by the
+race mode and the stage flags, probably how roads are closed off).
+
+The route: the road as a graph of sections (each a run of 84-byte
+slices: center, width, lane count, directions, links to the next,
+previous and side sections), then a table of corners, then 12 lists, one
+per bit of the race data's +24. `TrackRoute::OnLoaded` (`sub_820F8F30`,
+confirmed) turns the file's offsets into pointers and, for each of those
+bits that is set, narrows the listed slices' limits (floats +24 and +28
+of the slice record) to the values listed.
+
+### The AI's data
+
+The AI drivers' braking and speed points are in the route file: its
+corner table. Each slice lists corners by number; a corner holds
+floats that are probably the target speeds at its points, and the slices
+where it probably begins, turns in, reaches its apex and exits. The AI
+builds its path ahead through them (`AiPath::AddCornersAt`,
+`sub_8213D278`, and its callers). Not in the course files: the sections
+each AI profile prefers at forks (a table in `.data`, read by
+`AiPath::PreferredSections`, `sub_8213ADD8`), and the 70 route zones the
+HUD checks for road names and signs (hard-coded ranges,
+`TrackZones::Update`, `sub_82289118`).
+
+### What this means for mods
+
+- Any course file can already be replaced with the patch loader
+  (`PATCH_DATA/BUILD/TXR/BUILD_CRS/`). A model must still fit the shared
+  load buffer: 13,107,200 bytes, and the largest stock model (23536) is
+  12,749,948 unpacked.
+- More models in an area need more ids: an area's models are one
+  continuous id range in the course table, and their records are in set
+  file 2. That means new archive ids (the addon loader) and a patched
+  course table.
+- A new map needs its own course record, header and table entry (all 24
+  entries are used; an addon could take over a place or the table could
+  be moved), plus a mesh, a route with its corners for the AI, set files
+  and areas. The parts that are code, not data: the race's place choice,
+  the HUD's route zones, the AI's preferred sections and the wall kinds.
+
 ## String tables (confirmed)
 
 The game's text is in BUILD entries 22637-22653, one table per entry:
@@ -319,7 +497,7 @@ Loaded together at boot by `sub_820CC048`. Values are little-endian.
 72 cars x 8,432 bytes (607,104 bytes), in the car id order below. Every
 block of a record starts with the car's id (8 ASCII bytes padded with
 spaces), and the id appears nowhere else, which makes the layout easy to
-check (confirmed for all 72). `mod_tools/car_specs.py` exports the records
+check (confirmed for all 72). `sbxr_tools/car_specs.py` exports the records
 to an Excel workbook (one sheet per car; fields not worked out are
 UNLABELED) and builds them back.
 
@@ -341,12 +519,33 @@ cars (RX7, Z33, SKY34, GC8, CEL, ECLI, T86) and holds for all 72 records.
 |---|---|---|
 | +0x20, +0x24, +0x28 | f32 | Length, height and width (m). |
 | +0x40-0x58 | 2 x f32 x 4 | A box: min x, y, z at +0x40, +0x44, +0x48, max at +0x50, +0x54, +0x58 (w unused). Centered on the car, y 0 to the height, as wide as the car, and 0.10-0.16 m shorter than its length (all 72): probably the collision box. |
+| +0x60, +0xA0 | f32 | Front and rear camber (probably degrees): -1 and -1.667 on all road cars. |
+| +0x64, +0xA4 | f32 | Front and rear toe. |
+| +0x88, +0x90; +0xC8, +0xD0 | f32 | Set per axle, front then rear. The front pair is set only on cars with a driven front axle (4WD, and the VITZ and MARCH): probably the differential. Not worked out. |
+| +0xE0, +0xF4 | f32 | Front and rear spring rate (RX7 6.21 and 6.21, BUS 57.1 and 70.5). |
+| +0x164 | u32 | Differential type: 0 front only (VITZ, MARCH), 1 rear (FR cars and most traffic), 2 SKY32/SKY34 and the Imprezas, 3 the Subaru traffic, 5 EVO9 and CON_X. |
+| +0x16C | f32 | Front share of the drive torque: 0 FR, 1 FF, 0.35-0.5 4WD (IMP_GC8 0.35, the real car's 35:65). Matches block 2's drive type on every road car and used rival. |
+| +0x170 | u32 | Number of forward gears; matches block 2's (+100) in the same 68 of 72. |
 | +0x174 | f32 | Final drive: RX7 4.300, the real FD's. |
 | +0x180 | f32 | Reverse gear, negative (RX7 -3.483). |
 | +0x184-0x198 | 6 x f32 | Forward gear ratios, 0 after the last: RX7 3.483, 2.015, 1.391, 1.000, 0.762, the real FD's. The count matches block 2's gears (+100) in 68 of 72 (not the ECLI, LEAD04, WON04 or QUON). |
 | +532 | f32 | Mass (kg) the physics uses: about 7-10% below the spec sheet's (Z33 1380, sheet 1490; RX7 1173, sheet 1280). |
 | +536 | f32 | Wheelbase (m): RX7 2.425, Z33 2.65, CEL 2.925, the real cars'. |
 | +540, +544 | f32 | Front and rear track (m): RX7 1.46 and 1.46, the real FD's. |
+| +0x258 | f32 | Idle rpm: 800 in all 72. |
+| +0x274 | f32 | Steering angle: 36 (probably degrees) in all 72. |
+
+Block 1 is laid out like the car records of Kaido Battle 3 / Tokyo Xtreme
+Racer Drift 2 (JakeMR2's ImHex pattern `KB3_CarData.hexpat`, see Sources):
+every field above sits at the same offset there. The camber, toe, spring,
+differential, gear count, idle and steering labels come from that pattern,
+checked against this game's values; the torque share is from the values
+(Drift 2's two dumped cars fit it too: FR 0, FF 1). Two of the pattern's
+labels don't fit this game: it has drag at +0x24 and +0x28, which here are
+the height and width (confirmed above), and 27 rpm values at +0x1A4, which
+here are the same in every car. The axle settings are two groups of the
+same layout, 0x40 apart (front +0x5C, rear +0x9C); the springs start two
+groups of five floats, 0x14 apart (+0xE0, +0xF4).
 
 The dimensions match block 2's millimeters on most cars, but not on 34
 values, mostly rivals' (the L86/T86 are 1.645 m wide here, 1625 mm in
@@ -375,7 +574,7 @@ read for the menus and a few settings (below).
 | +100 | u32 | Gears (4-6): matches the number of ratios in block 1 (+0x184) in 68 of 72. |
 | +104 | u32 | Price; 999999 for cars not sold: the cut cars (ECLI, S30, L86, T86), the unused BOSS slots and all traffic. |
 | +112, +116, +120 | u32 | 0 or 1. Not worked out. |
-| +124 | u32 | 0x1FFF or 0x1FDF (bit 5 clear on the RX7, N180, S30, T86, SUPRA70 and some rivals). Probably a mask; not worked out. |
+| +124 | u32 | Aero options: probably a mask of the aero menu's options (`aero_avail` in the KB3 pattern). 0x1FFF or 0x1FDF: bit 5 is clear on the RX7, N180, S30, T86, SUPRA70 and the rivals built on them. All but the S30 have pop-up headlights, and the L86 (the T86's fixed-light twin) has it set, so bit 5 is probably the head lights. |
 | +128 | u8 | 0-12. Not worked out. |
 | +129 | u8 | Maker: 3 Mazda, 4 Mitsubishi, 5 Nissan, 6 Subaru, 8 Toyota; 0 for CON_X, rivals and traffic. |
 | +130 | u8 | Drive type: 0 FF, 1 FR, 4 4WD. Checked; the game has no mid- or rear-engined cars. |
@@ -435,7 +634,7 @@ resolution, so it's probably drawn from the curve.
 | +48 | f32 | Width (m). |
 | +52 | f32 | 25.5-27.5. Not worked out. |
 | +56, +60 | f32 | 1, 0.2 in all tires. |
-| +64, +68 | f32 | Equal in every tire; probably grip. |
+| +64, +68 | f32 | Grip, forward and lateral (names from the KB3 pattern); equal in every tire. |
 | +72 | f32 | 1.2 in all tires. |
 | +76 | f32 | About 5000-7000, larger for wider tires (Z33: 5876 front, 6790 rear). Not worked out. |
 | +80 | f32 | Rim diameter (in). |
@@ -515,6 +714,26 @@ Rolling Gal No. 1, LEAD04 White Fairy, LEAD06 Naniwa's Warship, WON01
 Death Driver, WON02 Matterhorn, WON03 Rolling Master, WON04 Gold License,
 WON06 Stalking Hammer. `CON_X` is the player's Skull Bullet. 55-70
 (MK100 to QUON) are traffic.
+
+#### Traffic records
+
+The traffic records look carried over from the older games rather than
+tuned like the road cars:
+
+- Their dampers (block 1 +0xE4, +0xE8, +0xF8, +0xFC) are 0.1, 0.35, 0.25
+  and 0.35 in all 16, the same as both Drift 2 cars in JakeMR2's dumps;
+  road cars range 0.1-0.4 and 0.3-0.6.
+- Block 1's torque share and block 2's drive type disagree on several:
+  the TOWN and TRAILER are FR in block 2 and 1 (FF) in block 1, the ESTIMA
+  and QUON 4WD and 1, the FORESTER FR and 0.5 with a 4WD differential. The
+  FF ones other than the VITZ and MARCH have only rear differential values.
+- Block 1 +0x240 and +0x244 are 1 and 1 (0 and 0 on the BUS, LORRY,
+  TRAILER and QUON); on road cars and rivals the second is always 4 x the
+  first.
+- Only traffic has model names (block 2 +316), and they're stale: the QUON
+  (a truck) is named `FORESTER S/tb STi2` and the FORESTER has none.
+- They still have full engine and tire upgrade sets, though traffic is
+  never tuned.
 
 ### How the game uses the car specs (from the code)
 
@@ -872,7 +1091,7 @@ where they are isn't known yet.
 A part is a small model: its own node list (the first node names what it
 attaches to: `fb`, `rb`, `door_L_00`, `engine_room`, `room`, `fender`),
 the shapes, and the materials with their shaders. Big-endian.
-`mod_tools/blender_plugin/sbx_formats` reads and writes them (every byte
+`sbxr_tools/blender_plugin/sbx_formats` reads and writes them (every byte
 kept, so an untouched part writes back identical), and the Blender
 add-on there imports and exports them. All 6,430 part files in BUILD
 read, and each one writes back byte for byte (`blender_plugin/tests`).
@@ -1073,7 +1292,7 @@ The shader section (confirmed against the data):
 
 Across all 6,430 parts the 14,149 pairs hold only 39 different shaders
 (11 vertex, 28 pixel; compared by microcode) in 28 different pairs.
-`mod_tools/blender_plugin/sbx_formats/shaders.py` names them `vs_00`-`vs_10` and
+`sbxr_tools/blender_plugin/sbx_formats/shaders.py` names them `vs_00`-`vs_10` and
 `ps_00`-`ps_27`, in order of first use over the parts by id. Each
 shader's constant table names its inputs, which tell them apart: the
 lighting ones (`DLightDir`, `PntLightPos`, `SpotLightDir`), specular
@@ -1086,7 +1305,7 @@ lit and textured, `ps_16` lit with specular, a cube map and a texture
 sections differ from part to part mostly in those 16 leftover bytes. The
 same section turns up at many file offsets, so it holds no file offsets.
 `python -m sbx_formats.library BUILD_OUT -o ../../assets/shader_library.json`
-(from `mod_tools/blender_plugin/`) collects every pair with its entry and
+(from `sbxr_tools/blender_plugin/`) collects every pair with its entry and
 a few material records that use it (the library is game data, so it stays
 under `assets/` or in the Blender add-on's own folder). A part takes a
 pair it doesn't have by appending it: the count at +0x00 goes up one and
@@ -1094,9 +1313,9 @@ pair it doesn't have by appending it: the count at +0x00 goes up one and
 names the new pair by its index at +0x068. Not yet tried in game.
 
 The material and shape records have more bytes than the fields above;
-`mod_tools/blender_plugin/sbx_formats/layout.py` names every byte, with the ones not
+`sbxr_tools/blender_plugin/sbx_formats/layout.py` names every byte, with the ones not
 worked out as `unknown_*`. Across all 27,402 draws most of those are
-constant (`mod_tools/blender_plugin/tests/coverage.py` lists their values). Carried
+constant (`sbxr_tools/blender_plugin/tests/coverage.py` lists their values). Carried
 through raw.
 
 **Layout** (all 6,430 parts, confirmed against the data). Sections in
@@ -1112,7 +1331,7 @@ slots point at the end of its used streams (fetch constant size 0). BUILD
 141 (`flareShape`, a lens-flare sprite) is the exception: no nodes, and
 its six small offsets point at its embedded section (which isn't a node
 file) and its first stream instead of small sections.
-`mod_tools/blender_plugin/sbx_formats/part_write.py` lays parts out by these rules: all
+`sbxr_tools/blender_plugin/sbx_formats/part_write.py` lays parts out by these rules: all
 6,430 write back byte for byte, and still read correctly when every
 section is moved.
 
@@ -1214,7 +1433,7 @@ root node names its car and set, `<code>_<set>_tr` (`rx7_a_tr`,
 Several rivals reuse another car's textures (BOSS00 the S30's, WON04 and
 LEAD04 the ECLI's), so texture names don't always tell. Blocks 0-17 are
 the full cars (110-137 set-a parts, with every tuning part); 18-44 have
-16-41. `mod_tools/blender_plugin/car_models.xlsx`
+16-41. `sbxr_tools/blender_plugin/car_models.xlsx`
 lists every block's nodes and parts.
 So the SKY35's node files are 2700 (a), 12638 (b) and 20367 (c); 20367
 is the one node file missing from this dump (its interior textures,
@@ -1432,6 +1651,13 @@ differently.
 - **Old research**: the user's own earlier scripts and notes (string,
   bitmap and save tools), kept locally in `docs/old_research/` and not
   committed.
+- **JakeMR2's TXR research**
+  (github.com/JakeMR2/Jake-s-TXR-Resources-and-Research): Cheat Engine
+  tables, ImHex patterns and notes for the earlier games. Its Kaido Battle 3
+  car pattern (`KB3_CarData.hexpat`) has block 1's layout; the block 1,
+  tire grip and aero option labels marked above come from it, checked
+  against this copy's data, and the traffic comparison uses its two Drift 2
+  car dumps. It has no license, so nothing is copied from it.
 - **GUT Archive Tools** (github.com/igorciz777/GUTArchiveTools, switch
   `-2` for this game): an extractor for Genki's GUT archives, used as a
   read-only reference. It's GPL-3.0, so its code isn't copied into this
@@ -1456,4 +1682,6 @@ differently.
 - The car modes (what sets a and b are used for), where the paint color
   and the environment maps are bound, and the interior textures
   (891 ...).
-- `BUILD_CRS` contents in detail.
+- The course files' contents (needs a dump of `BUILD_CRS`): the formats
+  above are from the code only. Also what the race map's three variants
+  are, and what the header assets (23009, 23010) hold.

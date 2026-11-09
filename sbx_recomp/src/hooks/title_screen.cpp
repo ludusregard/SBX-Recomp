@@ -23,6 +23,9 @@
 
 #include "hooks/title_screen.h"
 
+#include "hooks/autosave.h"
+#include "hooks/native_calls.h"
+
 #include "guest.h"
 
 #include <rex/cvar.h>
@@ -145,21 +148,27 @@ extern "C" REX_FUNC(sub_82098DF0) {
 // Looks up the set's state (+9604) and the message in its table
 // (sub_82106380) and moves to the entry's next state (+28) if it has one.
 // Hooked for --log_boot_modes: logs each state change, to map the boot's
-// states (for a boot straight to the menu).
+// states (for a boot straight to the menu); and for --autosave, which watches
+// the garage menus through it (src/hooks/autosave.cpp).
 extern "C" REX_FUNC(sub_82106410) {
   REX_FUNC_PROLOGUE();
-  if (!REXCVAR_GET(log_boot_modes)) {
-    __imp__sub_82106410(ctx, base);
+  const bool log = REXCVAR_GET(log_boot_modes);
+  const bool autosave = hooks::Autosave_Watching();
+  if (!log && !autosave) {
+    hooks::NativeGameModes_Handle(ctx, base);
     return;
   }
   uint32_t set = ctx.r3.u32;
   uint32_t message = guest::LoadU32(base, ctx.r4.u32);
   uint32_t before = guest::LoadU32(base, set + 9604);
-  __imp__sub_82106410(ctx, base);
+  hooks::NativeGameModes_Handle(ctx, base);
   uint32_t after = guest::LoadU32(base, set + 9604);
-  if (after != before) {
+  if (log && after != before) {
     REXLOG_INFO("boot modes: handler set {:08X} state {} -> {} on message {}", set, before,
                 after, message);
+  }
+  if (autosave) {
+    hooks::Autosave_OnDispatch(ctx, base, set, message, before);
   }
 }
 

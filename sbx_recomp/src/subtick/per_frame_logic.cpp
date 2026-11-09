@@ -9,6 +9,7 @@
 // only above 30 fps).
 
 #include "guest.h"
+#include "hooks/native_calls.h"
 #include "subtick/car_transforms.h"
 #include "subtick/frame_pacer.h"
 #include "subtick/game_messages.h"
@@ -171,7 +172,7 @@ extern "C" REX_FUNC(sub_820F1038) {
   if (RenderOnly()) {
     return;
   }
-  __imp__sub_820F1038(ctx, base);
+  hooks::NativeCourseScenery_AdvanceTextureAnimations(ctx, base);
 }
 
 // Minimap::Draw: after drawing, steps the blink clock at 0x826B5784 (wraps
@@ -797,7 +798,7 @@ extern "C" REX_FUNC(sub_8220F7B0) {
   if (g_in_rival_cutscene) {
     g_rival_logo = ctx.r3.u32;
   }
-  __imp__sub_8220F7B0(ctx, base);
+  hooks::NativeRaceHud_RivalLogoDraw(ctx, base);
 }
 
 extern "C" REX_FUNC(sub_821573E0) {

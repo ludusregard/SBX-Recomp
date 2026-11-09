@@ -14,17 +14,17 @@ Built with assistance of Claude with manual review and testing done by myself.
 ## Features
 
 - **Fix for the black screen after quest races** (on by default;
-  `--post_race_check_fix=false` turns it off).
+  `--post_race_check_cycles=60` puts back the game's wait).
 - **Unlocked Frame Rate**: game logic is 30hz still but rendering is unlocked.
 - **Unlocked Resolution**: Play in 4k! (aspect ratio is still forced 16:9)
 - **HD Menu Text** (more menu redraws in the works)
 - **Additional Anti-Aliasing**: toggle options for CMAA2 and FXAA
-- **Patch loader**: game archive files are replaced by loose files in
+- **Patch Loader**: game archive files are replaced by loose files in
   `assets/PATCH_DATA/` (on by default; `--patch_loader=false` turns it off).
 - **Custom Music Support**: add your own music to the game mix
 - **Shutoko Battle X Restored** archive files, loaded through the patch
   loader from a submodule in `assets/PATCH_DATA/BUILD/TXR/BUILD/`.
-- **Cut cars**: the ECLI, S30, L86 and T86 are offered from the start of a
+- **Cut Cars**: the ECLI, S30, L86 and T86 are offered from the start of a
   new game (`--unlock_cut_cars=false` turns it off), and come on their own
   stock wheels instead of AD00 rims: the ECLI its own, the L86, S30 and T86
   the LORRY's steel wheels (`--cut_car_steelies=false` gives them the
@@ -49,7 +49,17 @@ and `assets/ADDON_DATA/` (new content, not used yet) are part of this repo.
 | `run.bat` | The game, on the native Vulkan renderer. |
 | `run.bat --log_level=debug` | The same, with debug logging (written to `logs/`). |
 
-Options can be added after either, e.g. `run.bat --fullscreen=true`.
+Options can be added after either, e.g. `run.bat --fullscreen=true`;
+they last for that run only. Built from source, the same is
+`sbx_recomp\run_vulkan.bat`.
+
+## Settings
+
+Press F4 in the game for the settings menu. Most changes apply at once (the
+ones marked apply after a restart); **Save** writes them to `sbx.toml` next to
+`sbx.exe`, loaded at every start. The file can also be edited by hand while
+the game is closed: one setting per line, `name = value`. Options on the
+command line win over it.
 
 ## Reporting problems
 
@@ -73,10 +83,26 @@ Clone with its submodules. `fix_symlink_stubs.py` replaces the SDK's
 symlink stubs with real files (git on Windows checks symlinks out as text
 files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo-vulkan/sbx.exe`.
 
+## Credits and links
+
+- [Shutoko Battle X Restored](https://github.com/ludusregard/Shutoko-Battle-X-Restored):
+  the English relocalization of the game.
+- [GUT Archive Tools](https://github.com/igorciz777/GUTArchiveTools) by
+  igorciz777: the extractor for Genki's GUT archives (`BUILD.DAT` and
+  `.TOC`), used as a reference for the archive format.
+- [Jake's TXR Resources and Research](https://github.com/JakeMR2/Jake-s-TXR-Resources-and-Research)
+  by JakeMR2: Cheat Engine tables, ImHex patterns and notes on the earlier
+  Tokyo Xtreme Racer and Kaido Battle games, which helped work out the car
+  specs.
+- [Shutokou Battle Discord](https://discord.gg/n4FvF3VkHQ): the series'
+  community, for support and feedback.
+
 ## Documentation (This is written by LLMs primarily for LLMs)
 
 - [docs/functions.md](docs/functions.md): what's known about the game's
   code.
+- [docs/native-code.md](docs/native-code.md): the game's code rewritten as
+  our own C++, subsystem by subsystem.
 - [docs/status.md](docs/status.md): what works now, fixes,
   experiments, and what's next.
 - [docs/game_data.md](docs/game_data.md): what's known about the game's
@@ -92,7 +118,6 @@ files). This builds `sbx_recomp/out/build/win-amd64-relwithdebinfo-vulkan/sbx.ex
   (the patch and addon loaders, adding cars).
 - [docs/cut_car_wheels.md](docs/cut_car_wheels.md): stock wheel and tire
   baselines for the cut cars.
-- [mod_tools/README.md](mod_tools/README.md): tools for editing the game's
-  data files.
-- [mod_tools/blender_plugin/README.md](mod_tools/blender_plugin/README.md):
-  the Blender add-on for the game's car models.
+- [sbxr_tools](https://github.com/ludusregard/sbxr_tools): tools for
+  editing the game's data files, and the Blender add-on for the game's car
+  models (moved out of this repo's `mod_tools/`).

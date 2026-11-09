@@ -2,7 +2,7 @@
 # assets/PATCH_DATA/ replaces archive files with your own (the patch loader);
 # assets/ADDON_DATA/ is for new content (the addon loader, not built yet).
 /assets/*
-!/assets/PATCH_DATA/
+!/assets/PATCH_DATA/*
 !/assets/ADDON_DATA/
 
 # Build output

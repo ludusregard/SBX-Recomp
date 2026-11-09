@@ -2,6 +2,7 @@
 
 #include "debug/frame_state_diff.h"
 #include "guest.h"
+#include "hooks/autosave.h"
 #include "hooks/title_screen.h"
 #include "subtick/car_transforms.h"
 #include "subtick/per_frame_logic.h"
@@ -236,6 +237,7 @@ extern "C" REX_FUNC(sub_82159540) {
   REX_FUNC_PROLOGUE();
   subtick::g_race_draw_step_seen = true;
   hooks::TitleScreen_OnRaceDrawn();  // ends --skip_cutscenes's fast menus
+  hooks::Autosave_OnRaceDrawn();     // a day of racing, for --autosave
   // The cars' matrices are blended between ticks for the step, so the camera
   // built from them moves with the cars (car_transforms.cpp).
   // The camera passes' view-projections for this frame first (render-only

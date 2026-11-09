@@ -15,8 +15,6 @@
 // The game's driver object (AudioRenderDriver, docs/functions.md): Register
 // sub_8244D0A0, Submit sub_8244D128, Destroy sub_8244D188 (ITC 824657E0,
 // 82465870, 824658C8).
-//
-// --native_audio=false brings back the SDK's driver, for comparison.
 
 #include "audio/native_audio.h"
 
@@ -51,9 +49,6 @@
 #include <memory>
 #include <mutex>
 #include <vector>
-
-REXCVAR_DEFINE_BOOL(native_audio, true, "SBX",
-                    "Our own audio output instead of the SDK's render driver and Audio Worker");
 
 REXCVAR_DECLARE(int32_t, audio_maxqframes);
 
@@ -430,9 +425,7 @@ bool IsOurHandle(uint32_t handle) {
 }  // namespace
 
 void Configure(rex::RuntimeConfig& config) {
-  if (REXCVAR_GET(native_audio)) {
-    config.audio_factory = REX_AUDIO_BACKEND(SbxAudioSystem);
-  }
+  config.audio_factory = REX_AUDIO_BACKEND(SbxAudioSystem);
 }
 
 }  // namespace native_audio

@@ -71,7 +71,7 @@ In stages:
 
 1. **Reuse empty slots (no code).** 11 unused BOSS slots (12-19, 21-23)
    and the 4 cut cars already have records, lists and unlock bits. A mod
-   edits a record with `mod_tools/car_specs.py` and ships it through the
+   edits a record with `sbxr_tools/car_specs.py` and ships it through the
    patch loader. Only 45 cars have models, and the unused BOSS slots
    aren't among them, so a slot borrows or replaces an existing model
    (once the car id to model mapping is known).
@@ -86,6 +86,44 @@ In stages:
      from its folder, or a stock car's.
    - **Archive ids:** the virtual id range above.
    - **Save:** the sidecar save.
+
+## Languages
+
+Built 2026-11-06 (phase 1 of the language plan: a language chosen at
+startup), not yet tested. `src/hooks/patch_loader.cpp` serves a language's
+files through the same overlay as `PATCH_DATA`:
+
+```
+assets/ADDON_DATA/LANGUAGES/
+  EN/
+    language.xml              <Language Name="English" Font="LATIN"/>
+    00022637.bin ...          string tables, text screens, by archive id
+  JP/                         empty or missing: the disc's
+  FONTS/
+    HD/LATIN/00022656.dat ... whole font containers, by archive id
+    SD/LATIN/
+    HD/JAPANESE/
+```
+
+- `--language` (empty: EN if that folder exists, else JP) picks the folder;
+  `--font_quality` (hd, sd) which font folder is looked in first. Both are
+  read at startup; F4 lists the languages found.
+- Every id found in any language or font folder is a language id. For those
+  ids a `PATCH_DATA` file is ignored (logged), so English text left in
+  `PATCH_DATA` can't show in Japanese; the chosen language's file is served,
+  else the disc's.
+- A font id is looked for in `FONTS/<quality>/<script>/` (the script from
+  `language.xml`'s `Font`; without one, JP uses JAPANESE and the rest
+  LATIN), then the other quality, then the disc's.
+- Files in a language folder are flat and named by archive id: 0-23008 are
+  BUILD ids, 23009-24367 BUILD_CRS ids.
+- Until `LANGUAGES/` holds archive files nothing changes, so Restored keeps
+  loading from `PATCH_DATA`. To try it, copy Restored's text and screens
+  (22591, 22604, 22624-22653, 71) into `LANGUAGES/EN/` and its fonts
+  (22654-22657, 1, 2) into `FONTS/HD/LATIN/`.
+
+Switching while the game runs and live reload (phases 2-4) are still plans
+(the Project's language toggle plan).
 
 ## What has to be traced first
 

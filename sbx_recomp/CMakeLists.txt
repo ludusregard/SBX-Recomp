@@ -95,16 +95,54 @@ set(SBX_SOURCES
     src/audio/native_audio.cpp
     src/audio/output_mix.cpp
     src/debug/frame_state_diff.cpp
+    src/hooks/accessories.cpp
+    src/hooks/autosave.cpp
+    src/hooks/car_makers.cpp
+    src/hooks/car_physics.cpp
+    src/hooks/car_specs.cpp
+    src/hooks/collision.cpp
+    src/hooks/course_scenery.cpp
     src/hooks/create_file.cpp
     src/hooks/custom_music.cpp
     src/hooks/cut_car_wheels.cpp
+    src/hooks/data_file.cpp
+    src/hooks/data_load.cpp
+    src/hooks/data_tables.cpp
+    src/hooks/file_layer.cpp
     src/hooks/font.cpp
+    src/hooks/framework.cpp
+    src/hooks/game_modes.cpp
     src/hooks/lights.cpp
+    src/hooks/load_poll.cpp
+    src/hooks/material_passes.cpp
+    src/hooks/menu_helpers.cpp
+    src/hooks/menu_sounds.cpp
     src/hooks/patch_loader.cpp
     src/hooks/post_effects.cpp
     src/hooks/post_race.cpp
+    src/hooks/race_hud.cpp
+    src/hooks/race_hud_object.cpp
+    src/hooks/race_scene.cpp
+    src/hooks/race_screens.cpp
+    src/hooks/race_sounds.cpp
+    src/hooks/race_states.cpp
+    src/hooks/replay_snapshots.cpp
+    src/hooks/save_data.cpp
+    src/hooks/save_interface.cpp
+    src/hooks/scene.cpp
+    src/hooks/scene_loaders.cpp
+    src/hooks/scene_models.cpp
+    src/hooks/screen_constructors.cpp
+    src/hooks/screen_objects.cpp
+    src/hooks/second_set.cpp
+    src/hooks/shader_objects.cpp
+    src/hooks/strings_and_font.cpp
+    src/hooks/texture_compression.cpp
     src/hooks/title_screen.cpp
+    src/hooks/track_zones.cpp
+    src/hooks/ui_movies.cpp
     src/hooks/unlock_cut_cars.cpp
+    src/hooks/vehicle.cpp
     src/hooks/voice.cpp
     src/hooks/xma.cpp
     src/subtick/car_transforms.cpp
@@ -119,6 +157,7 @@ set(SBX_SOURCES
 list(APPEND SBX_SOURCES
     src/base/log.cpp
     src/base/log_sdk.cpp
+    src/base/settings_file.cpp
     src/helpers/executable.cpp
     src/native/app_window.cpp
     src/native/buffers.cpp

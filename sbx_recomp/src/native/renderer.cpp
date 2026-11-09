@@ -140,6 +140,21 @@ ITC_FLAG_STRING(blur_frame_blend_shutter, "1/8", "SBX",
                 "With blur_frame_blend: the shutter's length in seconds, or as a fraction "
                 "(1/30). A time, so the same at any frame rate; more frames fall in a longer "
                 "shutter (at most 16)");
+ITC_FLAG_BOOL(gbuffer, false, "SBX",
+              "Experimental: G-buffer lite: the 3D view's depth and the camera's motion "
+              "vectors into buffers of our own each race frame (groundwork for new effects; "
+              "nothing uses them yet but gbuffer_debug)");
+ITC_FLAG_INT32(gbuffer_resolve, 1, "SBX",
+               "With gbuffer: at which of a frame's resolves of the 3D view it's built (1: "
+               "the opaque scene, before the transparent draws)");
+ITC_FLAG_INT32(gbuffer_debug, 0, "SBX",
+               "With gbuffer: draw one of its buffers over the frame: 0 off, 1 view distance "
+               "(white near), 2 camera motion (red right, green down, gray still), 3 the "
+               "game's own velocity buffer, 4 the depth as drawn");
+ITC_FLAG_STRING(gbuffer_debug_depth_range, "500", "SBX",
+                "With gbuffer_debug 1: the distance shown as black, in the game's units");
+ITC_FLAG_STRING(gbuffer_debug_velocity_scale, "20", "SBX",
+                "With gbuffer_debug 2: how much the motion is magnified");
 ITC_FLAG_BOOL(fxaa, false, "SBX",
               "Anti-alias the 3D view with FXAA (cheaper and softer than cmaa2; after it if "
               "both are on), before the post-processing reads it");
@@ -803,6 +818,10 @@ VkCommandBuffer Renderer::BeginFrame() {
                               ITC_FLAG(aa_debug),
                               std::strtof(ITC_FLAG(cmaa2_threshold).c_str(), nullptr));
     passes_.set_msaa(ITC_FLAG(msaa));
+    passes_.set_gbuffer(ITC_FLAG(gbuffer), uint32_t(std::max(ITC_FLAG(gbuffer_resolve), 1)),
+                        ITC_FLAG(gbuffer_debug),
+                        std::strtof(ITC_FLAG(gbuffer_debug_depth_range).c_str(), nullptr),
+                        std::strtof(ITC_FLAG(gbuffer_debug_velocity_scale).c_str(), nullptr));
     // The shutter is a length in seconds, or a fraction such as 1/60.
     float shutter = 1.0f / 8.0f;
     if (const std::string& text = ITC_FLAG(blur_frame_blend_shutter); !text.empty()) {
@@ -1394,15 +1413,20 @@ namespace {
 // Lists handed over and not yet replayed: whether a logic pass recorded
 // each (any thread, under g_lists_mutex); and the one being replayed
 // (render thread).
+struct HandedList {
+  bool logic_pass;
+  ListCamera camera;
+};
 std::mutex g_lists_mutex;
-std::deque<bool> g_lists;
+std::deque<HandedList> g_lists;
 bool g_replaying_logic_list = true;
+ListCamera g_replaying_camera;  // render thread
 uint64_t g_lists_missing = 0, g_lists_queued_most = 0;
 }  // namespace
 
-void Renderer_OnListHandedOver(bool logic_pass) {
+void Renderer_OnListHandedOver(bool logic_pass, const ListCamera& camera) {
   std::lock_guard lock(g_lists_mutex);
-  g_lists.push_back(logic_pass);
+  g_lists.push_back({logic_pass, camera});
 }
 
 void Renderer_OnReplayStart() {
@@ -1412,14 +1436,20 @@ void Renderer_OnReplayStart() {
     // Not handed over by WaitForFrame: taken as a logic pass's.
     g_lists_missing++;
     g_replaying_logic_list = true;
+    g_replaying_camera = {};
     return;
   }
-  g_replaying_logic_list = g_lists.front();
+  g_replaying_logic_list = g_lists.front().logic_pass;
+  g_replaying_camera = g_lists.front().camera;
   g_lists.pop_front();
 }
 
 bool Renderer_ReplayingLogicList() {
   return g_replaying_logic_list;
+}
+
+ListCamera Renderer_ReplayingCamera() {
+  return g_replaying_camera;
 }
 
 void Renderer_TakeListStats(uint64_t& missing, uint64_t& most) {

@@ -2,7 +2,7 @@
 
 A static recompilation of Shutoko Battle X (Xbox 360) on ReXGlue
 (`rexglue-sdk/`, submodule pinned to v0.10.0; SDK changes go in
-`patches/rexglue-sdk/`, none yet).
+`patches/rexglue-sdk-vulkan/`).
 
 ## Docs
 
@@ -12,7 +12,13 @@ Read the relevant doc before making changes; update it as you learn.
   what's next. Check when a task depends on it; update when one changes.
 - `docs/functions.md`: known functions, addresses, data, overrides. Check
   before naming, hooking or overriding a function; add every function or
-  address worked out.
+  address worked out, and a row for every override (run
+  `sbx_recomp/tools/check_function_statuses.py` after adding or removing
+  one).
+- `docs/native-code.md`: the game's subsystems rewritten as our C++, one
+  `--native_<name>` flag each. Check before writing native code; add each
+  subsystem's row and test notes.
+- `docs/menus.md`: the front end's screens, cursors and menu messages.
 - `docs/game_data.md`: archives, how they load, data formats. Check
   before work on file loading, assets or mods; add every format detail
   worked out.
@@ -31,13 +37,17 @@ Read the relevant doc before making changes; update it as you learn.
   loaders, adding cars). Check before work on mod loading or new content.
 - `docs/cut_car_wheels.md`: suggested stock tire sizes and wheel
   positions for the cut cars. Check before changing their wheels or specs.
-- `mod_tools/README.md`: the data tools (car specs workbook, cut car
-  wheels, the Blender add-on). Check before writing a new data tool.
-- `mod_tools/blender_plugin/README.md` and `PLAN.md`: the Blender add-on
-  (part import and export): how to build, use and test it, and how it was
-  built. The format code for parts, nodes and XPR2s is
-  `mod_tools/blender_plugin/sbx_formats/`. Check before work on the add-on
-  or part writing.
+- The data tools (car specs workbook, cut car wheels, the font upscaler,
+  the Blender add-on and its format code, `blender_plugin/sbx_formats/`)
+  moved to their own repo, sbxr_tools
+  (https://github.com/ludusregard/sbxr_tools), on 2026-11-08. Paths written
+  `sbxr_tools/...` in these docs are in that repo. Check its README before
+  writing a new data tool, and its `blender_plugin/README.md` and `PLAN.md`
+  before work on the add-on or part writing.
+- `docs/itc-parity.md`: what came over from ITC-Recomp, what's left, and
+  how each of its folders reads at SBX's addresses.
+- `docs/native-renderer-port.md`: the native Vulkan renderer, and how
+  SBX's graphics library differs from ITC's.
 - `docs/porting-from-itc.md`: how SBX relates to ITC-Recomp (Import Tuner
   Challenge, the US release), matching its functions to SBX, and the last
   reviewed ITC-Recomp commit. Check before porting anything from it.
@@ -80,4 +90,4 @@ ALWAYS check ITC-Recomp for changes since "Last reviewed" in
   here says otherwise.
 - American English (color, gray), plain and short, in code, comments,
   docs and commit messages.
-- No `-march=native`.
+- No `-march=native`.

@@ -28,9 +28,6 @@
 // reads that track (audio::music::Track, same interface) instead of decoding
 // the XMA data. The game's loop count still applies (once, n times or
 // forever); its loop points don't (the track has its own).
-//
-// --native_xma=false (read once, at the first XMA object) runs the game's own
-// layer on the SDK's emulated XMA hardware instead (no custom music).
 
 #include "guest.h"
 
@@ -50,10 +47,6 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
-
-REXCVAR_DEFINE_BOOL(native_xma, true, "SBX",
-                    "Decode the game's XMA sounds (the music, the menu sounds) with our own "
-                    "FFmpeg instead of the SDK's emulated XMA hardware");
 
 namespace {
 
@@ -88,13 +81,6 @@ std::unordered_map<uint32_t, std::shared_ptr<Object>> g_objects;
 
 rex::memory::Memory* Memory() {
   return rex::system::kernel_state()->memory();
-}
-
-// --native_xma, latched at the first call: objects made one way are only
-// ever handled that way.
-bool Native() {
-  static const bool native = REXCVAR_GET(native_xma);
-  return native;
 }
 
 std::shared_ptr<Object> Find(uint32_t handle) {
@@ -254,10 +240,6 @@ void OnStream(PPCContext& ctx, uint32_t none, F f) {
 // = contexts made later; r6 out): the object and its handle.
 extern "C" REX_FUNC(sub_82445690) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445690(ctx, base);
-    return;
-  }
   const uint32_t count = ctx.r3.u32, descriptions = ctx.r4.u32, flags = ctx.r5.u32,
                  out = ctx.r6.u32;
   auto object = std::make_shared<Object>();
@@ -286,10 +268,6 @@ extern "C" REX_FUNC(sub_82445690) {
 // XmaObject::Destroy (r3 the object).
 extern "C" REX_FUNC(sub_824458C0) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_824458C0(ctx, base);
-    return;
-  }
   const uint32_t handle = ctx.r3.u32;
   std::shared_ptr<Object> object;
   {
@@ -314,10 +292,6 @@ extern "C" REX_FUNC(sub_824458C0) {
 // kept (sub_82445988 reads it).
 extern "C" REX_FUNC(sub_82445910) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445910(ctx, base);
-    return;
-  }
   if (auto object = Find(ctx.r3.u32)) {
     std::lock_guard lock(object->mutex);
     object->contexts_made = false;
@@ -327,10 +301,6 @@ extern "C" REX_FUNC(sub_82445910) {
 
 extern "C" REX_FUNC(sub_824460E0) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_824460E0(ctx, base);
-    return;
-  }
   if (auto object = Find(ctx.r3.u32)) {
     std::lock_guard lock(object->mutex);
     object->contexts_made = true;
@@ -340,10 +310,6 @@ extern "C" REX_FUNC(sub_824460E0) {
 
 extern "C" REX_FUNC(sub_82445988) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445988(ctx, base);
-    return;
-  }
   auto object = Find(ctx.r3.u32);
   ctx.r3.u64 = object && object->contexts_made ? 1 : 0;
 }
@@ -351,10 +317,6 @@ extern "C" REX_FUNC(sub_82445988) {
 // XmaObject::SetInputBuffer (object, stream, data, size in bytes).
 extern "C" REX_FUNC(sub_82445998) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445998(ctx, base);
-    return;
-  }
   const uint32_t data = ctx.r5.u32, size = ctx.r6.u32;
   OnStream(ctx, kBothInUse, [&](StreamState& s) -> uint32_t {
     if (!s.input) {
@@ -373,10 +335,6 @@ extern "C" REX_FUNC(sub_82445998) {
 // (object, stream, address): 1 if a sound at that address is still playing.
 extern "C" REX_FUNC(sub_82445A70) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445A70(ctx, base);
-    return;
-  }
   const uint32_t address = ctx.r5.u32;
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     return (Valid(s) && s.input == address) || s.pending == address;
@@ -386,30 +344,18 @@ extern "C" REX_FUNC(sub_82445A70) {
 // (object, stream): 1 unless both input slots are taken.
 extern "C" REX_FUNC(sub_82445AD0) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445AD0(ctx, base);
-    return;
-  }
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t { return !(Valid(s) && s.pending); });
 }
 
 // (object, stream): 1 if no sound is playing.
 extern "C" REX_FUNC(sub_82445B28) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445B28(ctx, base);
-    return;
-  }
   OnStream(ctx, 1, [&](StreamState& s) -> uint32_t { return !Valid(s) && !s.pending; });
 }
 
 // (object, stream): samples ready.
 extern "C" REX_FUNC(sub_82445B90) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445B90(ctx, base);
-    return;
-  }
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     return s.input ? ReadyCount(s, s.ring_samples) : 0;
   });
@@ -419,10 +365,6 @@ extern "C" REX_FUNC(sub_82445B90) {
 // readable there in one go.
 extern "C" REX_FUNC(sub_82445DC0) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445DC0(ctx, base);
-    return;
-  }
   const uint32_t out = ctx.r5.u32;
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     guest::StoreU32(base, out, s.staging);
@@ -434,10 +376,6 @@ extern "C" REX_FUNC(sub_82445DC0) {
 // where they were read from to r6; returns how many.
 extern "C" REX_FUNC(sub_82445C08) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445C08(ctx, base);
-    return;
-  }
   const uint32_t count = ctx.r5.u32, out = ctx.r6.u32;
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     guest::StoreU32(base, out, s.staging);
@@ -455,20 +393,12 @@ extern "C" REX_FUNC(sub_82445C08) {
 // (object, stream): samples taken so far.
 extern "C" REX_FUNC(sub_82445FF8) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445FF8(ctx, base);
-    return;
-  }
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t { return s.consumed; });
 }
 
 // XmaObject::ResetStream (object, stream): the sound stopped.
 extern "C" REX_FUNC(sub_82445E68) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445E68(ctx, base);
-    return;
-  }
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     Reset(s);
     return 0;
@@ -478,10 +408,6 @@ extern "C" REX_FUNC(sub_82445E68) {
 // (object, stream): the error status; none.
 extern "C" REX_FUNC(sub_82445F30) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445F30(ctx, base);
-    return;
-  }
   OnStream(ctx, 0, [&](StreamState&) -> uint32_t { return 0; });
 }
 
@@ -490,10 +416,6 @@ extern "C" REX_FUNC(sub_82445F30) {
 // subframes skipped at the start +9, count +10).
 extern "C" REX_FUNC(sub_82445F80) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445F80(ctx, base);
-    return;
-  }
   const uint32_t loop = ctx.r5.u32;
   const uint32_t start_bit = guest::LoadU32(base, loop) & 0x3FFFFFF;
   const uint32_t end_bit = guest::LoadU32(base, loop + 4) & 0x3FFFFFF;
@@ -517,10 +439,6 @@ extern "C" REX_FUNC(sub_82445F80) {
 // (object, stream, r5 the start's bit offset, r6 subframes to skip).
 extern "C" REX_FUNC(sub_82446088) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82446088(ctx, base);
-    return;
-  }
   const uint32_t bit = ctx.r5.u32 & 0x3FFFFFF, skip = ctx.r6.u32 & 7;
   OnStream(ctx, 0, [&](StreamState& s) -> uint32_t {
     if (!s.custom) {  // a custom track starts at its start
@@ -534,19 +452,11 @@ extern "C" REX_FUNC(sub_82446088) {
 // ahead and moves finished streams on.
 extern "C" REX_FUNC(sub_824461B0) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_824461B0(ctx, base);
-    return;
-  }
   ctx.r3.u64 = 0;
 }
 
 extern "C" REX_FUNC(sub_82446310) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82446310(ctx, base);
-    return;
-  }
   ctx.r3.u64 = 1;
 }
 
@@ -555,19 +465,11 @@ extern "C" REX_FUNC(sub_82446310) {
 // for, 0 (answered at once).
 extern "C" REX_FUNC(sub_82446248) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82446248(ctx, base);
-    return;
-  }
   ctx.r3.u64 = 0;
 }
 
 extern "C" REX_FUNC(sub_82446490) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82446490(ctx, base);
-    return;
-  }
   if (auto object = Find(ctx.r3.u32)) {
     std::lock_guard lock(object->mutex);
     for (auto& s : object->streams) {
@@ -581,18 +483,10 @@ extern "C" REX_FUNC(sub_82446490) {
 // Reads the XMA registers' context array address at boot: no hardware.
 extern "C" REX_FUNC(sub_82445678) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82445678(ctx, base);
-    return;
-  }
 }
 
 extern "C" REX_FUNC(sub_82446018) {
   REX_FUNC_PROLOGUE();
-  if (!Native()) {
-    __imp__sub_82446018(ctx, base);
-    return;
-  }
   // (object, stream, r5 out): the current input buffer's address, the input
   // read offset and word 1's low 3 bits. From SBX's flush (sub_824539F0);
   // never called in ITC's play. Zeros (no input position kept); logged once.
