@@ -12,7 +12,7 @@
 #endif
 
 REXCVAR_DEFINE_INT32(max_fps, 0, "SBX",
-                     "With --subtick: frame rate cap in races; 0 means unlimited");
+                     "With --subtick: frame rate cap (races and menus); 0 means unlimited");
 
 namespace subtick {
 

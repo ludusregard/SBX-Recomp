@@ -8,7 +8,9 @@
 // normally (a logic pass); otherwise it waits for the next frame slot
 // (--max_fps) and the coming pass is render-only: Update messages are
 // skipped, so it draws without advancing the game. Everything else in the
-// pass runs as the game has it. Menus stay at the game's 30 fps.
+// pass runs as the game has it. The menus draw frames between their ticks
+// too, once a mode change has settled and while no menu waits to close
+// (game_messages.h).
 //
 // The present's 2-vblank wait is dropped (the pacer holds the rate instead).
 
@@ -29,8 +31,8 @@
 #include <cstring>
 
 REXCVAR_DEFINE_BOOL(subtick, true, "SBX",
-                    "Experimental: in races, draw frames between the game's 30 Hz ticks "
-                    "(--max_fps), with the cars' controls fed input sampled each frame "
+                    "Draw frames between the game's 30 Hz ticks (--max_fps), in races and the "
+                    "menus, with the cars' controls fed input sampled each frame "
                     "(--subtick_input); game logic stays at 30 Hz");
 
 namespace {
@@ -67,19 +69,21 @@ void PaceNextPass(PPCContext& ctx, uint8_t* base) {
   subtick::CarTransforms_EndFrame(base);  // the last frame's camera blend
   subtick::FramePacer& pacer = subtick::GetFramePacer();
   bool finished_logic_pass = !subtick::GameMessages_IsRenderOnlyPass();
-  subtick::GameMessages_OnPassFinished();
+  subtick::GameMessages_OnPassFinished(base);
   if (finished_logic_pass) {
     subtick::Input_OnLogicPassFinished();
   }
   bool render_only;
   if (subtick::GameMessages_InRace()) {
     render_only = pacer.WaitForNextFrame();  // false once the next tick is due
-  } else {
-    // Menus: the game's 30 Hz, unless
+  } else if (hooks::TitleScreen_SkipTickWait()) {
     // --skip_cutscenes is running the boot fast (hooks/title_screen.h).
-    if (!hooks::TitleScreen_SkipTickWait()) {
-      pacer.WaitForNextTick();
-    }
+    render_only = false;
+  } else if (subtick::GameMessages_MenusSettled()) {
+    render_only = pacer.WaitForNextFrame();
+  } else {
+    // Menus: the game's 30 Hz.
+    pacer.WaitForNextTick();
     render_only = false;
   }
   if (!render_only) {
@@ -107,8 +111,15 @@ extern "C" REX_FUNC(sub_82092E60) {
   __imp__sub_82092E60(ctx, base);
   if (!REXCVAR_GET(subtick)) {
 #ifdef SBX_VULKAN_RENDERER
-    subtick::GameMessages_OnPassFinished();  // tells when a race ends
+    subtick::GameMessages_OnPassFinished(base);  // tells when a race ends
 #endif
+    // Turned off on a render-only pass (from F4, mid-race): every pass is a
+    // logic pass from here. Left set, the Update message stayed skipped and
+    // the game stood still. The camera blend of the last frame is put back.
+    if (subtick::GameMessages_IsRenderOnlyPass()) {
+      subtick::CarTransforms_EndFrame(base);
+      subtick::GameMessages_SetRenderOnlyPass(false);
+    }
     return;
   }
   uint32_t r1 = ctx.r1.u32;

@@ -58,7 +58,7 @@ with no row); run it after changing either.
 | `sub_820BFF60` | `Vehicle::GetSpeedKmh` |  | Returns the float at vehicle+48 (m/s) times 3.6. |
 | `sub_820943D8` |  |  | First tick handler: polls input, then walks listener lists that run both game logic and the draw step. |
 | `sub_82106478` | `GameMessages::Dispatch` | Overridden | Delivers the game's queued messages to their handlers: 0 = Update (all game logic), 1 = Draw. r3 = the dispatcher: handlers +0 (array), handler count +200, queue of 50 12-byte messages at +204, queued count +804, read index +808. The game has several dispatchers (40 call sites). Replaced with the same steps (`src/subtick/game_messages.cpp`) with `--subtick` (Update skipped on render-only passes); otherwise the original. |
-| `sub_82106410` | `StateTable::Dispatch` | Overridden | Picks the handler object a message goes to; its method 0 handles it. r3 = a handler object, r4 = the message: returns the entry for (the object's state at +9604, the message id), `0x82695848` when there is none, and moves +9604 to the entry's next state (`docs/menus.md`). Wrapped by `src/hooks/autosave.cpp` to watch the garage menus (from `src/hooks/title_screen.cpp`'s override), which calls our C++ for it with `--native_game_modes` (`src/hooks/game_modes.cpp`). |
+| `sub_82106410` | `StateTable::Dispatch` | Overridden | Picks the handler object a message goes to; its method 0 handles it. r3 = a handler object, r4 = the message: returns the entry for (the object's state at +9604, the message id), `0x82695848` when there is none, and moves +9604 to the entry's next state (`docs/menus.md`). Wrapped by `src/hooks/autosave.cpp` to watch the garage menus (from `src/hooks/title_screen.cpp`'s override), which calls our C++ for it with `--native_game_modes` (`src/game/game_modes.cpp`). |
 | `sub_82099700` | `Input::Update` | Wrapped | r3 the input manager: physical pads (+988, 4 x 212, `PhysicalPad::Read`), logical pads (+8, 5 x 196, `LogicalPad::Build`), processors (+1840, 5 x 416, vtable slot 1), listener slots (+3924, 5 x 12; the first node's object, vtable slot 1). Skipped on render-only passes (`src/subtick/input.cpp`). |
 | `sub_82159540` | `Race::DrawStep` | Wrapped | The race's draw step (Draw message). Writes a field at +64 of the object its calls return. Noted to tell races from menus (`src/subtick/game_messages.cpp`). |
 | `sub_820A3B98` | `CameraPass::Update` | Wrapped | Scales the main camera's projection after the update (`--camera_fov`, `CarTransforms_CameraFov`), then rebuilds the view-projection. Rebuilds a camera pass's view (+0x10) from its eye, target and up vector (+0x190, +0x1A0, +0x1B0), and its view-projection (+0x90 = view * projection at +0x50). Called several times per Draw for pass 0. On pass 0 in a race, built from the camera blended between ticks; also run on pass 0 before `Race::DrawStep` on render-only passes, so the cars are drawn with the frame's view-projection (`src/subtick/car_transforms.cpp`, see "Subtick"). |
@@ -100,6 +100,7 @@ with no row); run it after changing either.
 | `sub_821452C8` |  |  | Finds the animation in set r3 whose texture is r4; -1 if none. |
 | `sub_82146F00` |  |  | Draws the light groups: for each group, builds a light list on the stack (count +32, 48-byte lights at +36, from static level data) and picks its texture's current animation frame. Calls `sub_8209CED0` → `sub_8209CD58`. |
 | `sub_820F5610` | `Minimap::Draw` | Wrapped | From the draw step part `sub_820F5F48`; steps the minimap blink clock at `0x826B5784`/`0x826B5788` after drawing. Both put back on render-only passes (`src/subtick/per_frame_logic.cpp`). |
+| `sub_8257A460` | `ModelAnimations::Apply` | Wrapped | From `Scenery::Draw`, every pass: r3 a scene model; two animation lists at +304 (16-byte entries, time +12) and +364 (32-byte entries, time +16), each applied at its time (`sub_825873B8`, `sub_82586710`), then stepped one frame (`sub_82587498`, `sub_825867D8`: +1.0, wrapping at the clip's end, clips 80 bytes at the list's +8, start +72, end +76). The course's moving textures. On render-only passes applied at the logic pass's time plus the frame's progress and put back (`src/subtick/per_frame_logic.cpp`). |
 | `sub_82107A38` |  | Wrapped | From Draw, every pass; adds one to the play time frame counter at `0x826B5870` and runs `ActionMappers::Update` (call at `0x82107B48`). The one is taken back on render-only passes, and every other pass with `--tick_rate_60` (`src/subtick/per_frame_logic.cpp`). |
 | `sub_82110928` |  |  | Turns the play time frame counter into hours, minutes and seconds (30, 1800, 108000 frames). |
 | `sub_82107CB8` | `Boot::StartMovie` |  | Message handler: plays the next boot movie, id from the table at `0x826B588C` (index at `0x826B58A8`), via `sub_820A45D0` (name table at `0x8233AF8C`). |
@@ -158,7 +159,7 @@ with no row); run it after changing either.
 | `sub_820CC048` |  |  | Loads the parameter tables, BUILD 72-83 (72 = car specs) through `Archive::Load`; `sub_820C9700` sizes them first. |
 | `sub_821744D8` |  |  | Loads BUILD 22887, the loose `DATA\AUDIO\CAR_SE.XWB`, and starts the music (`Music::PlayRoaming`): a message handler of the scene (`sub_82175238`). |
 | `sub_82094BB8` |  |  | Startup; names the XACT engine `txr_xact` and calls `sub_821066D0` (which calls `Archive::Init`). |
-| `sub_8228CEE8` | `SaveGame::Write` | Wrapped | One of four functions (with `sub_8228CFA8`, `sub_8228D228`, `sub_8228D370`) that open the save, `TXR360:\TXR_DATA_1`. |
+| `sub_8228CEE8` | `SaveGame::Write` | Overridden | One of four functions (with `sub_8228CFA8`, `sub_8228D228`, `sub_8228D370`) that open the save, `TXR360:\TXR_DATA_1`: formats the save's display name with the local time and asks the save interface for the write (`sub_820A0678`, 129,200 bytes). Logged by `src/hooks/autosave.cpp`'s override, which calls our C++ for it with `--native_save_interface` (`src/game/save_interface.cpp`). |
 | `sub_8228CDD0` | `SaveGame::DeviceState` | Wrapped | The save device's state. Logged with `--log_autosave` (`src/hooks/autosave.cpp`), as are the four below. |
 | `sub_8228CE08` | `SaveGame::Status` | Wrapped | Logged with `--log_autosave`. |
 | `sub_8228CE40` | `SaveGame::Pump` | Wrapped | The save's pump. Logged with `--log_autosave`. |
@@ -166,7 +167,7 @@ with no row); run it after changing either.
 | `sub_8228CFA8` | `SaveGame::Read` | Wrapped | Opens and reads the save. Logged with `--log_autosave`. |
 | `sub_82105790` | `GameData::Get` |  | r3 an index: returns the pointer at `0x826B5838` + 4 x r3. Index 0 is the save (`docs/game_data.md`). |
 | `sub_82113D28` | `SaveData::Clear` | Overridden | r3 the save: zeroes it and sets its defaults. |
-| `sub_82113FB0` | `SaveData::NewGame` | Wrapped | r3 the save: clears it (`SaveData::Clear`) and sets a new game's state, including the car unlock bits at +0x1985C (every car but CON_X, ECLI, S30, L86, T86 and BOSS00). Run by the title menu's new game and at boot on the empty saves. Sets the cut cars' bits after it (`src/hooks/unlock_cut_cars.cpp`, `--unlock_cut_cars`). |
+| `sub_82113FB0` | `SaveData::NewGame` | Overridden | r3 the save: clears it (`SaveData::Clear`) and sets a new game's state, including the car unlock bits at +0x1985C (every car but CON_X, ECLI, S30, L86, T86 and BOSS00). Run by the title menu's new game and at boot on the empty saves. Sets the cut cars' bits after it (`src/hooks/unlock_cut_cars.cpp`, `--unlock_cut_cars`), whose override calls our C++ for it with `--native_save_data` (`src/hooks/save_data.cpp`). |
 | `sub_82114278` | `SaveData::NewGameKeepCars` | Wrapped | r3 the save: a new game that keeps the garage (+6120), the word at +6116 and the unlock bits at +0x1985C (copies them out, runs `SaveData::NewGame`, copies them back). From the title menu (`sub_8221F568`). Sets the cut cars' bits after it (`src/hooks/unlock_cut_cars.cpp`). |
 | `sub_82114D88` | `SaveData::Unlock` |  | r3 the save, r5 what to unlock (a switch of 42 cases), r6 its id. One case sets car r6's bit at +0x1985C if it isn't set yet; new unlocks are queued for the garage notifications. |
 | `sub_8217F2A0`, `sub_82272370`, `sub_8224A0E8` |  |  | Build the car lists (the starter cars and the shop): for each of the 72 cars with its bit set at save +0x1985C, copy its specs (`sub_820C9C38`) into list 0 or 1 by spec byte +771 (0 for the road cars, 1 for CON_X and the rival cars). |
@@ -186,7 +187,7 @@ with no row); run it after changing either.
 | `sub_820C2608` | `Vehicle::SetupFromCar` |  | r3 a vehicle, r4 a car object: copies the physics values from block 1 (dimensions, mass, wheelbase, tracks ...), the engine stage (rev limit, torque, +156-196) and the tires into the vehicle, then `Vehicle::ApplyTuning`. |
 | `sub_820C0B48` | `Vehicle::ApplyTuning` |  | r3 a vehicle, r4 a car object: applies the tuning at car+1644 using tables of multipliers built in the code (7 entries per part, separate NA and turbo tables), the engine type as a cylinder count, and the aero parts. |
 | `sub_822B8A90` |  | Overridden | Returns [r3+8] (with r3 = car+1644: the engine stage level). |
-| `sub_820A0A88` | `Shaders::LoadAll` |  | At boot (from `sub_821067A0`): loads every shader pair through `sub_820A09D8`: BUILD 3-70 as indices 0-33, BUILD 22800-22811 as 1000-1005, and BUILD_CRS ids 24256-24367 as 2000-2055. A pair is a vertex shader (the odd id) and its pixel shader (the next id). See "Shaders" in `docs/game_data.md`. |
+| `sub_820A0A88` | `Shaders::LoadAll` | Overridden | At boot (from `sub_821067A0`): loads every shader pair through `sub_820A09D8`: BUILD 3-70 as indices 0-33, BUILD 22800-22811 as 1000-1005, and BUILD_CRS ids 24256-24367 as 2000-2055. A pair is a vertex shader (the odd id) and its pixel shader (the next id). See "Shaders" in `docs/game_data.md`. |
 | `sub_820A09D8` |  |  | r3 the vertex shader's file id, r4 the pair's index: loads the vertex shader and the pixel shader (r3 + 1) with `Archive::Load`. |
 | `sub_821364B0` | `Glow::Record` | Wrapped | The glow (bloom) recorder in races: builds the cross-fade quad (pixel shader `E0D070FB58A4EA03`, the vertex color's alpha is the history weight at +8460) and the glow constants c33 (+8436/+8440, +8452 the glow strength, +8456, +8476). |
 | `sub_82134EC8` | `View::UploadPreviousViewProjection` |  | r3 the view. Records vertex c100 x4, the motion blur's previous view-projection: copied from view+8080 (this tick's) when view+48 is set (a pass that ran the game logic) and view+44 is 0, else from view+8144 (the previous tick's). The view moves the pair on after the logic pass, so it's the same matrix all tick. Read by the motion blur's vertex shader (`matOldWVPVS`, BUILD 9/67). |
@@ -204,9 +205,15 @@ with no row); run it after changing either.
 | `sub_820E4178` | `Dash::PoseDials` | Wrapped | r3 the dash, r4 the car, r5 the camera passes: poses up to seven needles, each from `Dial::Angle`. |
 | `sub_820D32D0` | `Dial::Angle` |  | A needle's angle from a gauge value. |
 | `sub_820D3388` | `Dial::TachometerAngles` |  | The tachometer's two angles from the revs. |
-| `sub_8211D4B8` | `UiMovie::Update` | Wrapped | r3 the movie, r4 0 = advance a frame and draw, 1 = draw only. Runs the HUD, the race start countdown and the pause menus. Advancing is replayed from the logic pass on render-only passes (`src/subtick/per_frame_logic.cpp`). |
+| `sub_8211D4B8` | `UiMovie::Update` | Overridden | r3 the movie, r4 0 = advance a frame and draw, 1 = draw only. Runs the HUD, the race start countdown and the pause menus. Advancing is replayed from the logic pass on render-only passes (`src/subtick/per_frame_logic.cpp`), whose override calls our C++ for it with `--native_ui_movies` (`src/hooks/ui_movies.cpp`): the queued and looping animations applied (`sub_82585FD8`) and their times stepped, the ended ones taken off the queue. |
+| `sub_8211CF58` | `UiMovie::DrawQueuedText` |  | r3 the movie, r4 its text queue (movie+40: +0 entries of 128 bytes, +8 their count), r5 draw only: draws each queued text and takes it off, from the last. An entry: +0 its node, +16 its transform (16 floats). A scrolling text's x from `TickerText::Offset`, then `TickerText::Step` unless draw only. |
+| `sub_8211B9D0` | `TickerText::Offset` | Wrapped | r3 the movie, r4 the text's draw (+0 x, +8 width, +120 id): the x a scrolling text is drawn at, from its record in the movie's node map (movie+39884: +4 set, +8 frame count, +12 frames before it scrolls, +16 speed). Between ticks taken between the last two frame counts (`src/subtick/per_frame_logic.cpp`). |
+| `sub_8211BB10` | `TickerText::Step` | Wrapped | r3 the movie, r4 the text's id: counts a frame on its record. Skipped on render-only passes (`src/subtick/per_frame_logic.cpp`). |
+| `sub_821196D0` | `AudioManager::PlayCue` | Wrapped | From the AudioManager's 2D and 3D cue slots (`sub_82119808`, `sub_821197D8`; its vtable is `0x82008318`, so `MenuSound::Play`'s slot 10 is `sub_82119808`). Nothing is started while the menus' drawing is redrawn between ticks (`src/subtick/per_frame_logic.cpp`). |
+| `sub_82225DE0` | `ParkingArea::DrawScene` | Wrapped | r3 the area (`[0x8280DE60]`): its camera from +592 (eye) and +608 (target), then its scenery (`Scenery::Draw` on +552). From the parking area's handler `sub_8222C840` (message 0), which then draws the cars (draw object +5004 = 1, `sub_82225918`, `sub_820C93A8`, `sub_820C5BA0`). Drawn again between ticks with `--subtick_menu_3d` (`src/subtick/per_frame_logic.cpp`). |
+| `sub_8217DD48` | `GarageStage::Step` | Wrapped | r3 the stage's holder (+0 the stage, 6208 bytes, `VirtualAlloc`), r5 keep the camera's pitch in range: moves the camera around the car (`sub_82179EE8` → `CameraPass::Update`), turns and poses the car (`sub_8217A9D0`) and draws it on its stage (`sub_820C5BA0`, `sub_820C8238`). Called from the garage's and shops' messages, once a tick; drawn again between ticks with `--subtick_menu_3d` (`src/subtick/per_frame_logic.cpp`). |
 | `sub_82585FD8` | `UiMovie::ApplyAnimation` |  | Applies each playing animation's tracks with t = (time - k0) / (k1 - k0), clamped. |
-| `sub_82585C40` | `UiMovie::ApplyTrack` | Wrapped | r3 the node, r4 the track (+0 its property id), f1 t: writes one word into the node. Some tracks add to the value instead of setting it. |
+| `sub_82585C40` | `UiMovie::ApplyTrack` | Overridden | r3 the node, r4 the track (+0 its property id), f1 t: writes one word into the node. Some tracks add to the value instead of setting it. r5 and r6 the keys t is between; a key blends as a step, a line or a curve. Subtick's override (`src/subtick/per_frame_logic.cpp`, the adds once a tick) calls our C++ for it with `--native_ui_movies` (`src/hooks/ui_movies.cpp`). |
 | `sub_82585560` | `UiMovie::TrackProperty` |  | r3 a property id: its 12-byte descriptor (+0 node offset, +4 type). |
 | `sub_82582D50` | `UiMovie::Child` |  | r3 the node, r4 an index: that child (count at node+112). |
 | `sub_82119D50` | `UiMovie::RestorePose` |  | Copies a movie's rest pose back onto its live nodes. |
@@ -222,7 +229,7 @@ with no row); run it after changing either.
 | `sub_8212BDA0` | | Wrapped | The opponent marker's overlay record (vtable slot 5; r3 = overlay, r4 = camera pass index; ITC's `sub_8212CE40`): builds the sprite on the stack from its centre (overlay +176..+184, set once a tick) and axes facing the camera pass's eye. With `--subtick` the centre is blended between ticks for the call. |
 | `sub_82102B30`, `sub_82102BB0` | | | Replay: store the player's control record (r3 = record, r4 = pad), and replace it from the replay while one plays; from `sub_8215E390` right after `PlayerControls::Build`. |
 | `sub_821573E0` |  | Wrapped | Probably the rival intro cutscene's Update handler: 107 of its 126 expected instructions line up, but it's 210 long and makes calls the expected one doesn't. Not checked. |
-| `sub_8220F7B0` | `RivalLogo::Draw` | Overridden | Draws the rival's logo: with its entry's flag 8, its UI movie looked up and run, and flag 16 set when it's over. Kept for render-only passes by `src/subtick/per_frame_logic.cpp`, which calls our C++ for it with `--native_race_hud` (`src/hooks/race_hud.cpp`). |
+| `sub_8220F7B0` | `RivalLogo::Draw` | Overridden | Draws the rival's logo: with its entry's flag 8, its UI movie looked up and run, and flag 16 set when it's over. Kept for render-only passes by `src/subtick/per_frame_logic.cpp`, which calls our C++ for it with `--native_race_hud` (`src/game/race_hud.cpp`). |
 | `sub_8246BD88` | `MoviePlayer::OpenFile` |  | The movie player's file open (through a vtable); calls `CreateFile`. |
 | `sub_820AE840` |  | Overridden | The render thread's command that starts the boot movie. |
 | `sub_82106540` | `Bgm::Load` | Wrapped | r4 a bank name: looks it up in the table at `0x820069B0` (`bgm_tmp_01`-`17`, `BGM_SYSTEM`) and loads its sound bank (BUILD 22970 + i) and wave bank (22988 + i), or `SB_SYSTEM_SE` (22885, 22886) for any other name, through the sound object at `[0x826B5960]` (vtable slot 4). See `docs/audio.md`. Who calls it, by return address: "Music" in `docs/audio.md`. Custom music rolls first, by the caller, and for a blocked song hands it another name from the same list (`src/hooks/custom_music.cpp`). |
@@ -255,7 +262,7 @@ with no row); run it after changing either.
 | `sub_8257AE50` | `Model::RecordShape` |  | Records one shape's draws: shaders, constants, and for each material its textures through `XPRList::GetTexture` (material +0x98 the XPR, +0xB8 the texture). |
 | `sub_8257BA38` | `Model::RecordShapeUntextured` |  | Like `Model::RecordShape` without textures (probably a depth or shadow pass). Called from `Model::Draw`. |
 | `sub_820CEA60` | `Model::RecordMaterials` |  | Called from `Model::Draw`. Switches on each material's shared shader pair (+392 from the record's +8, the record's +0x190: 1000-1004; `docs/game_data.md`, "Part files") and binds the car's vinyl sheet (model+444) for 1000 and 1004. |
-| `sub_820CE7B8` | `Model::SetVinylTextures` |  | r4, r5: stored at model+444 and +448. |
+| `sub_820CE7B8` | `Model::SetVinylTextures` | Overridden | r4, r5: stored at model+444 and +448. |
 | `sub_820D5B70` | `CarModel::LoadExterior` |  | Loads set a (mode 0) or set b (mode 1), the mode being the word at +8 of `[car model+7256]`, then `CarModel::LoadDecals`. Also creates the vinyl sheet (`Texture::Create`, 1024 x 1024 A8R8G8B8). |
 | `sub_820D5680` | `CarModel::LoadSetA` |  | Node file 892 + 226 x car and body XPR2 890 + 226 x car (car = car model+32), each in its own allocation. |
 | `sub_820D5768` | `CarModel::LoadSetB` |  | Node file 11062 + 197 x car and body XPR2 11060 + 197 x car, the XPR2 into the shared load buffer (no size check). |
@@ -442,8 +449,8 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
   otherwise, in races, it waits for the next frame slot (`--max_fps`, 60 by
   default, 0 = unlimited) and the pass is render-only: `GameMessages::Dispatch`
   consumes Update messages without delivering them (main thread only), so
-  the pass draws the same state again. Menus stay at 30 fps (they record
-  their UI and read input during Update). A pass is in a race when the last
+  the pass draws the same state again. Menus stay at 30 fps (their state
+  tables tick on message 1 and draw on message 0; see "Menus" below). A pass is in a race when the last
   logic pass ran `Race::DrawStep`. The present's 2-vblank wait is dropped.
 - **Car input** (`input.cpp`, `input_weights.cpp`, `--subtick_input`):
   the player's record gets one input for the tick: the samples taken over
@@ -497,8 +504,19 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
   from them, several times a Draw. On pass 0 in a race each call is matched
   by its order within the pass; the logic pass records what each is given,
   and on every pass a call given exactly the tick's values builds from the
-  blend. Calls given other values are left alone. Over 8 m between ticks is
-  a cut. The blend stays in the pass for the rest of the frame and the
+  blend. Calls given other values are left alone. A cut isn't blended: the
+  eye or the target breaking from its motion, its move this tick differing
+  from its move the tick before by over 1 m or over half that move (the
+  view button: cockpit, dash, chase; a demo camera change; a menu camera
+  jumping). A camera moving fast but smoothly (the demo's fly-bys) isn't
+  cut. The tick after a cut has no move to compare and isn't tested.
+  Distance tests were tried first (2026-11-11: over 8 m, and a 2 m change of
+  the eye against the target, which worked in races but broke the demo's
+  fast cameras). John's test: about as good as the 8 m test for the demo's
+  cuts, but the garage's and the view button's switches are still blended
+  (their moves stay under the limits). Tabled; cutting on those switches'
+  own code is what's left (the function documented as running on a camera
+  switch, `sub_8213BEB8`, resets an AI path's history instead). The blend stays in the pass for the rest of the frame and the
   tick's values go back when the next pass starts
   (`CarTransforms_EndFrame`, before any game logic). The draw reads the eye
   and target besides the view: the camera position the cars' paint
@@ -529,7 +547,14 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
 - **Per-frame logic** (`per_frame_logic.cpp`): what runs from Draw and
   counts passes is kept to once a tick on render-only passes: blink timers,
   texture animations, the minimap blink clock, play time, UI movies and the
-  boost value (replayed from the logic pass's state).
+  boost value (replayed from the logic pass's state). The course models'
+  animations (`ModelAnimations::Apply`, `sub_8257A460`, from
+  `Scenery::Draw`: the scrolling textures; the flipbooks are
+  `TextureAnimations::Advance`) stepped one frame each pass, so they ran
+  faster with the frame rate (John's test, 2026-11-11). On render-only
+  passes they're applied at the logic pass's time plus the frame's
+  progress, and the times put back: they step once a tick and move smoothly
+  between. Works (John's test, 2026-11-11).
 - **Race overlays** (`per_frame_logic.cpp`): the marker above opponents,
   the tire smoke and the light trails behind head and tail lights,
   world-space sprites recorded with a camera pass's view-projection (+144)
@@ -541,9 +566,15 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
   in Update on logic passes and the recording (slot 5) on every pass just
   before `Race::DrawStep`, once pass 0 holds the frame's camera
   (`PerFrameLogic_RecordRaceOverlays`; the other passes as the update saw
-  them). A pass records if the overlays were updated on the latest tick or
-  the one before (a logic pass whose update came after its draw step still
-  draws). While paused the overlays aren't updated: the paused Update
+  them). A logic pass records if the overlays were updated on the latest
+  tick or the one before (its update can come after its draw step), the one
+  before only if it was an update, not the paused recording (the results
+  menu: the logic pass resuming a free run drew the destroyed health gauge
+  again for one tick, John's test, 2026-11-11; still there in his next
+  test); a
+  render-only pass only if they were updated on the latest, so once they
+  stop (the race over: the rival's marker and gauge) the frames between
+  ticks stop drawing them at once. While paused the overlays aren't updated: the paused Update
   handler `sub_8215C0A8` only records them (`RaceOverlays::Record`,
   `sub_8215BE80`), so they were drawn on logic frames and not between them
   (the marker and the tire smoke flickering every other frame). That
@@ -565,6 +596,92 @@ and `--subtick_input_sensitivity`; everything else here is always on with `--sub
   axes, and so the corners, change every frame, so the corner blending
   above never matched it and the centre stepped once a tick against the
   blended car. The centre is blended between its last two ticks instead.
+
+- **Menus** (with `--subtick`; the `--subtick_menus` flag was removed once it
+  worked, John's tests 2026-11-11; `renderer_hooks.cpp`, `game_messages.cpp`, `per_frame_logic.cpp`):
+  render-only passes outside races too, paced as in races. The dispatcher's
+  handlers are all state tables (`StateTable::Dispatch`) keyed by
+  (state, message id). Messages 0 and 1 are posted every pass, the others
+  are events. The race updates on 0 and draws on 1 (`Race::DrawStep` is
+  handler `sub_8215A778`, state 38, message 1; the HUD's `RaceHud::RunMovie`
+  callers too). The menus' tables use 1 for their tick: set-up and loading
+  (`VirtualAlloc`), timers, sounds (the title's `sub_82221640`), and 0 for
+  their UI movies with the logic around them (the garage top: 0
+  `sub_8218E400`, 1 `sub_8218E0A0`; the title: 0 `sub_82221C08`, 1
+  `sub_822215A0`). The first version skipped 0 and delivered 1 as in races:
+  black frames between ticks, the garage's scrolling text too fast, crashes
+  on mode changes (John's test, 2026-11-11). Now a render-only pass in the
+  menus delivers no message. It consumes the pass's own 0 and 1 (the next
+  logic pass posts its own) and leaves any event queued for the next logic
+  pass. In their place, the top-level UI movie updates the last logic pass's
+  messages made are drawn again, from the state each had then, at the time
+  between (UI movie animations, below). Render-only passes start only
+  once the scene's mode (`Scene::Draw`'s +64) has been the same for two
+  logic passes out of a race, so a mode change sets up on ticks.
+  `--log_render_only_draws` (native renderer) logs a render-only frame
+  whose draw count differs from the logic frame's: a screen drawing
+  something other than UI movies in its messages. John's first run
+  (2026-11-11) showed several (2 draws against 86, 112 against 349). The
+  garage's 3D (`GarageStage::Step`, `sub_8217DD48`, called from the garage
+  top's message 0 `sub_8218E400` and the shops') is one: it's noted with the
+  UI movie updates, in order, and drawn again, from the stage as it was before the logic pass's call (6208
+  bytes, put back after). Its camera calls are blended as in races, counted
+  only within the stage's steps, and the car is blended by
+  `Car::DrawUpdate`. John's test (2026-11-11): the garage's 3D is right,
+  but the door and hood sounds played on every redraw until the next tick,
+  so no sound is started while redrawing (`AudioManager::PlayCue`; the
+  first try hooked the wrong vtable slot and didn't stop it). The parking
+  area's 3D drew on ticks only: its handler (`sub_8222C840`, found with a
+  diagnostic logging where 3D objects were recorded from out of a race,
+  since removed) draws it itself, so its scene and cars are noted and drawn
+  again too (`ParkingArea::DrawScene`, `sub_82225DE0`). The
+  garage's scrolling text isn't moved by its UI movie: the movie's text draw
+  steps a per-text frame count (`TickerText::Step`, `sub_8211BB10`) after
+  each draw, so it scrolled once a frame with the UI redrawn. The step is
+  skipped between ticks, and the x taken between the last two counts
+  (`TickerText::Offset`, `sub_8211B9D0`; works, John's test 2026-11-11). A first try, moving queued text that moved steadily, didn't
+  change it and is gone. Garage sub-menu openings (to the course select or
+  the tuning shop, not mode changes) sometimes hung until `--subtick_menus`
+  (then a flag)
+  or `--subtick` was toggled (John's test, 2026-11-11, at 90 fps too). The
+  redraw calls what the logic pass's messages called, and those can post
+  messages (an animation ending, a menu stepping on); posted again, the next
+  logic pass took them twice. The queue is now put back after the redraw
+  (`--log_message_handlers` logs when the redraw changed it). That wasn't
+  it: John's next run (log 008) never logged it, and the hangs came at the
+  same place each time: the garage top's close (message 5, `sub_8218C350`)
+  then nothing until he toggled a flag, when its "closed" step (state 8,
+  message 3, `sub_8218C3D0`) ran at once; the tuning shop's close the same.
+  A closing menu waits in a state whose only entry is message 3, and with
+  frames between ticks that message sometimes never came (what posts it
+  isn't found: something the close starts, likely the UI movie's closing
+  animation). Now, while any handler waits in such a state (checked after
+  each logic pass from its state table: entries 48 bytes, key state +0 and
+  message +4, count +9600, state +9604), the menus run at 30 Hz, as for a
+  mode change; over 10 s in one is taken as resting there.
+  `--log_message_handlers` logs when a wait starts and ends. Works (John's
+  test, 2026-11-11, log 009): every wait ended on the next tick (2 passes),
+  so message 3 comes at once without the frames between ticks; the drop to
+  30 Hz isn't noticeable (the screen is black then). What on those frames
+  held it back isn't known.
+  `--log_message_handlers`
+  logs each handler with its message id (it logged the local copy's address
+  before, so every handler showed as Update).
+- **UI movies in races, frames between ticks** (`per_frame_logic.cpp`): a
+  render-only pass draws only the UI movie updates the tick's logic pass
+  made (by movie and order; draw-only updates too). The HUD was drawn for a
+  frame after a race's result took it down (race to free run, John's
+  tests 2026-11-11): drawn on a frame between ticks with no logic pass's
+  draw behind it. Works (John's test, 2026-11-11).
+- **UI movie animations** (`per_frame_logic.cpp`; was `--subtick_ui_blend`,
+  removed once it worked, John's tests 2026-11-11): on a render-only pass, a UI movie
+  replayed from its state before the logic pass's update has its running
+  animations' times moved on by 2 (the update's step a tick, in 60ths of a
+  second) times the frame's progress, so menu slides and HUD animations
+  move between ticks. Within each animation's length; a looping one isn't
+  wrapped early. Anything an animation triggers at a key (a sound, a
+  message) would happen twice: sounds and messages started during the
+  menus' redraw are dropped (above).
 
 Not done yet: wheel spin and steering change once a tick; the lights on
 car models (headlight and tail light sources, not the glow billboards) are
@@ -751,7 +868,7 @@ The race's screen object: +52 its strength, +76096 its UvMap. The UvMap and UvCo
 
 ### `native_scene_models`
 
-The scene models' records and links. The records' defaults and copies are tables read from SBX's code.
+The scene models' records and links, on the record types in `game/scene_loads.h` and `SceneModel` in `game/scene_models.h`.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
@@ -767,7 +884,7 @@ The scene models' records and links. The records' defaults and copies are tables
 | `sub_820D3910` | `CarModel::SetRecord` | Overridden | memcpy of the 3,696-byte car record to +32. |
 | `sub_820D3780` | `Record12::Reset` | Overridden | +0 = -1, +4 and +8 the float at 0x82001BD8. |
 | `sub_820D07D0` | `Layer::Reset` | Overridden | A 64-byte vinyl layer or sticker record's defaults. |
-| `sub_820D0848` | `CarRecord::Reset` | Overridden | The 3,696-byte car record's defaults (its 54 layers inline). |
+| `sub_820D0848` | `CarRecord::Reset` | Overridden | The 3,696-byte car record's defaults: its vectors, its 54 layers reset, the layers' kinds and the part order. |
 | `sub_820D31A0` | `PartsRecord::Reset` | Overridden | The 60-byte parts record cleared, +52 = 3. |
 | `sub_820D3488` | `InteriorRecord::Reset` | Overridden | The 120-byte interior record cleared, then its defaults. |
 | `sub_820D3100` | `CockpitRecord::Reset` | Overridden | +0 to +16 cleared, the interior record at +24. |
@@ -776,7 +893,7 @@ The scene models' records and links. The records' defaults and copies are tables
 | `sub_820D4250` | `CarRecord::SetW` | Overridden | 1.0 into the car record's rows and layers. |
 | `sub_820D94D8` | `SceneModelRecord::Reset` | Overridden | The 4,244-byte record: kind 1, then each part's defaults. |
 | `sub_820DAF08` | `SceneModelRecord::SceneModelRecord` | Overridden | CarRecord::SetW on +16, Record12::Reset on +4080 and +4092. |
-| `sub_820D7B98` | `CarRecord::Copy` | Overridden | r3 to, r4 from: the fields word by word (SBX's own offsets) and a 44-byte memcpy of +3632. |
+| `sub_820D7B98` | `CarRecord::Copy` | Overridden | r3 to, r4 from: the fields one by one and a 44-byte memcpy of the part order. |
 | `sub_820DAF58` | `SceneModelRecord::Copy` | Overridden | +0, the car record, then the other records (memcpy). |
 | `sub_820C3AB0` | `CarModel::AllocPages` | Overridden | VirtualAlloc(r5 bytes) into [r4]. |
 | `sub_820D9E48` | `SceneModel::Update` | Overridden | Every frame: the deferred build's countdown (+5044, +5040), then the interior's accessory anchored when there is one. |
@@ -787,12 +904,12 @@ The scene models' records and links. The records' defaults and copies are tables
 
 ### `native_save_data`
 
-The save data's defaults. The resets are tables read from SBX's code. Progress::SetDefaults (`sub_82113FB0`) is `unlock_cut_cars`' override and is called.
+The save data's defaults, on `SaveData` and its parts (`game/save_data.h`); a memset's clear is done in place, then the fields that aren't 0 set. SaveData::NewGame (`sub_82113FB0`) keeps `unlock_cut_cars`' override, which calls ours.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
 | `sub_82105830` | `Stats::Stats` | Overridden | The stats' records' defaults. |
-| `sub_82113828` | `Stats::ResetRecords` | Overridden | The 15 records' defaults, then +0 = 0. |
+| `sub_82113828` | `Stats::ResetRecords` | Overridden | The 15 records' defaults (their three indices -1), then +720 = 0. |
 | `sub_82113880` | `Stats::Reset` | Overridden | The stats cleared and their defaults. |
 | `sub_82113D28` | `SaveData::Clear` | Overridden | Progress::Clear: the 119,908 bytes cleared, its fields, Stats::Reset on +48. |
 | `sub_821134F8` | `BitSet400::SetAll` | Overridden | Bits 0 to 399 set. |
@@ -812,7 +929,7 @@ The save data's defaults. The resets are tables read from SBX's code. Progress::
 
 ### `native_accessories`
 
-The interior accessories' set at [0x826B51F0] and their 36-byte files. The archive, the entries' and accessories' own constructors and destructors stay recompiled.
+The interior accessories (`src/game/accessories.cpp`, types in `src/game/accessories.h`): the set at [0x826B51F0] (32 bytes: three entries of 1,104 bytes, each a count, an AccessoryFile at +4 and the accessory at +48, then a scale), the accessory's constructor and destructor, the skeleton's destructor, and the 36-byte AccessoryFile (+4 the asset, +8 the archive's serial, +12 its state: 0 none, 1 loading, 2 loaded, +16 the data, +20 its size, +24 whether the data is its own pages, +28 a callback and +32 its context). The archive, VirtualAlloc and VirtualFree, the entries' own constructors and destructors, the skeleton's construction and the accessory's texture stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
@@ -822,17 +939,22 @@ The interior accessories' set at [0x826B51F0] and their 36-byte files. The archi
 | `sub_820F0AB0` | `AccessoryFile::OnArchiveDone` | Overridden | For the file's serial: loaded, then its callback with r6 its context. |
 | `sub_820F0760` | `AccessoryFile::FreeData` | Overridden | [r3] VirtualFree'd and cleared. |
 | `sub_820F0BC0` | `AccessoryFile::Reset` | Overridden | Its own data cancelled or freed, its defaults. |
+| `sub_820F0C48` | `AccessoryFile::~AccessoryFile` | Overridden | Its vtable, `AccessoryFile::Reset`, then the empty base vtable (0x82000A40). |
 | `sub_820F0648` | `AccessoriesBase::AccessoriesBase` | Overridden | The vtable (0x82006704), the three entries 0. |
+| `sub_820F09E8` | `AccessoriesBase::~AccessoriesBase` | Overridden | Its vtable, `Accessories::ReleaseAll`, then the empty base vtable. |
 | `sub_820F0CF0` | `Accessories::Accessories` | Overridden | The base, the vtable (0x82006718), the scale 1.0. |
 | `sub_820F0DD8` | `Accessories::New` | Overridden | 32 bytes of pages made a set, or 0. |
 | `sub_820F0EC8` | `Accessories::Create` | Overridden | The set made once. |
-| `sub_820F0D90` | `Accessories::SetScale` | Overridden | r4 the scale to each entry's +1072 and the set's +16. |
+| `sub_820F0D90` | `Accessories::SetScale` | Overridden | r4 the scale to each entry's accessory (+1024) and the set's +16. |
 | `sub_820F0E20` | `Accessories::Free` | Overridden | The set at [r3] destroyed (vtable slot 0) and its pages freed. |
 | `sub_820F0F08` | `Accessories::Destroy` | Overridden | The set freed, if there is one. |
 | `sub_820F0968` | `Accessories::ReleaseAll` | Overridden | Each held entry released once. |
 | `sub_820F0920` | `Accessories::Release` | Overridden | r4 the index (3: none): its count down, destroyed at 0. |
 | `sub_820F0870` | `Accessories::AcquireEntry` | Overridden | r4 the index, r5 the texture: the entry made (its file loaded) or its count up; the accessory, or 0. |
-| `sub_820F0D48` | `Accessories::Acquire` | Overridden | AcquireEntry, then the set's scale to the accessory's +1024. |
+| `sub_820F0D48` | `Accessories::Acquire` | Overridden | AcquireEntry, then the set's scale to the accessory. |
+| `sub_820EF0C8` | `Accessory::Accessory` | Overridden | `PartModel::PartModel`, vtable 0x820066C0, its two files (+464, +500) and skeleton (+544) made, its position and rotation (+992, +1008) (0, 0, 0, 1), its scale (+1024) 1, +1044 = 1. |
+| `sub_820EF180` | `Accessory::~Accessory` | Overridden | The skeleton and files destroyed, then `PartModel::~PartModel`. |
+| `sub_820EFE58` | `AccessorySkeleton::~AccessorySkeleton` | Overridden | Its vtables (0x820066D8, +176 0x820066D4) and its members' (+216, +220, +240) put back, its file (+180) destroyed, +176 the empty vtable, then `sub_82580088`. |
 
 ### `native_strings_and_font`
 
@@ -870,7 +992,7 @@ The modes' state machines: up to 200 entries of 48 bytes (a 16-byte key, the han
 
 ### `native_screen_constructors`
 
-The front end's screen constructors: their stores are tables read from SBX's code, their members' constructors called in order.
+The front end's screen constructors, on the types in `game/screen_constructors.h`: each sets its vtable and defaults (mostly -1 for no node), then its own node numbers, and makes its members in order.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
@@ -916,9 +1038,9 @@ The collision shapes: their constructors, getters, bounds and placements. The bo
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820BD000` | `Query::Query` | Overridden | Constructor (a table). |
-| `sub_820BAE70` | `Shape::Shape` | Overridden | Constructor (a table). |
-| `sub_820BAFD0` | `BoxShape::BoxShape` | Overridden | Constructor: Shape::Shape, its table, BoxShape::SetCorners. |
+| `sub_820BD000` | `Query::Query` | Overridden | Constructor: the two shapes cleared, the four point sets' pointers set, the vectors' w cleared (`game/collision.h`, `Query`). |
+| `sub_820BAE70` | `Shape::Shape` | Overridden | Constructor: the center at 0, radius 0, no rotation, its four defaults (0.5, 0.5, 0.25, 0.05) (`game/collision.h`, `Shape`). |
+| `sub_820BAFD0` | `BoxShape::BoxShape` | Overridden | Constructor: Shape::Shape, the corners' and faces' w cleared, BoxShape::SetCorners. |
 | `sub_820B9D38` | `BoxShape::Corner` | Overridden | r3 + 176 + 16 x r4. |
 | `sub_820B9D48` | `BoxShape::Face` | Overridden | r3 + 304 + 32 x r4. |
 | `sub_820BA4C8` | `BoxShape::SetCacheWord` | Overridden | +160 + 4 x r4 = r5. |
@@ -953,16 +1075,16 @@ The car physics' set-ups and accessors. Float steps are the originals'. The vehi
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820AEBA0` | `CarData::SetDefaults` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820AEE68` | `CarData::CarData` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820B4160` | `Vehicle::Vehicle` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820BC280` | `CollisionSurfaces::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820BC398` | `CollisionWorld::ResetSurfaces` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820BA8D0` | `CollisionShape::Init` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820B7988` | `CollisionObject::CollisionObject` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820B79E0` | `CollisionObject::~CollisionObject` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820B77C8` | `RigidBody::RigidBody` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820B6180` | `Vehicle::RefreshFromBody` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_820AEBA0` | `CarData::SetDefaults` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820AEE68` | `CarData::CarData` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820B4160` | `Vehicle::Vehicle` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820BC280` | `CollisionSurfaces::Reset` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820BC398` | `CollisionWorld::ResetSurfaces` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820BA8D0` | `CollisionShape::Init` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820B7988` | `CollisionObject::CollisionObject` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820B79E0` | `CollisionObject::~CollisionObject` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820B77C8` | `RigidBody::RigidBody` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820B6180` | `Vehicle::RefreshFromBody` | Overridden | Its fields set and its calls made, in the original's order. |
 | `sub_820B3AB8` | `Vehicle::SetValue2388` | Overridden | +2388 = f1 clamped, +2385 = r4's byte, +2396 = 1.0 - f1 x k clamped (fused). |
 | `sub_820B3B28` | `Vehicle::SetGearValues` | Overridden | The gear's ratios into +2304 and +2308, +2312 to +2324. |
 | `sub_820B0360` | `Vehicle::RampReverseThrottle` | Overridden | +288 ramped by the car's rate (fused) up to 1.0, or 0.0. |
@@ -999,31 +1121,31 @@ The vehicles' construction, refresh, removal and route positions.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820BFF50` | `Vehicle::Refresh` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C2000` | `Vehicles::DestroyAll` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C2EF8` | `Vehicle::Construct` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C1F70` | `TrackPosition::Copy` | Overridden | r4 into r3. |
+| `sub_820BFF50` | `Vehicle::Refresh` | Overridden | Vehicle::RefreshFromBody on its physics part. |
+| `sub_820C2000` | `Vehicles::DestroyAll` | Overridden | The 7 vehicles from the last back: each one's wheel route positions destroyed, then its physics part. |
+| `sub_820C2EF8` | `Vehicle::Construct` | Overridden | Vehicle::Vehicle on its physics part, CarData::CarData, and the five route positions' vectors given w = 1 (`game/vehicle.h`, `Vehicle`). |
+| `sub_820C1F70` | `RoutePosition::Copy` | Overridden | r4 into r3 (`game/vehicle.h`, `RoutePosition`). |
 | `sub_820C1B98` | `Vehicle::UpdateTrackPositions` | Overridden | Every tick: the body's and the wheels' points into their route positions, each updated. |
 | `sub_820C1F00` | `Vehicle::RemoveFromWorld` | Overridden | The collision object taken out of the world, the other object deleted. |
 
 ### `native_race_states`
 
-The race states' simple handlers, the progress' reset and the route helpers. The race's ticks stay recompiled.
+The race states' simple handlers, the progress' reset and the route helpers, on `RaceStates` and `RaceProgress` (`game/race_states.h`). The race's ticks stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82161218` | `RaceStates::ClearStep` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82161238` | `RaceStates::OnQuit` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82161248` | `RaceStates::FadeInFree` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82161278` | `RaceStates::FadeOut` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_821617F0` | `RaceStates::Unload` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82162280` | `RaceStates::OnStandingStart` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_821627B0` | `RaceProgress::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82162C90` | `RaceStates::Begin` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82161218` | `RaceStates::ClearStep` | Overridden | `step` cleared. |
+| `sub_82161238` | `RaceStates::OnQuit` | Overridden | +9612 cleared. |
+| `sub_82161248` | `RaceStates::FadeInFree` | Overridden | +9612 to +9620 cleared, then the fade in (sub_8209D158, screen 5). |
+| `sub_82161278` | `RaceStates::FadeOut` | Overridden | The fade out (sub_8209D1E8, screen 15). |
+| `sub_821617F0` | `RaceStates::Unload` | Overridden | The progress at [0x826C7D90] deleted. |
+| `sub_82162280` | `RaceStates::OnStandingStart` | Overridden | +9612 to +9640 (but `progress`) and [0x826B65D0] cleared, then sub_82139350. |
+| `sub_821627B0` | `RaceProgress::Reset` | Overridden | The race entry reset (`RaceEntry::Reset`), then the four entries, the two halfword tables and the words after them. |
+| `sub_82162C90` | `RaceStates::Begin` | Overridden | +9612 to +9620 cleared, the progress reset, then +9628 to +9640 cleared. |
 | `sub_821600F8` | `Time::Sub` | Overridden | [r3] - [r4] in milliseconds, a time word again (sub_82101850). |
-| `sub_82160170` | `RoutePosition::NotAfter` | Overridden | 1 when r3's position isn't after r4's. |
-| `sub_82160CB0` | `RaceProgress::CountTime` | Overridden | r5's count up and its time (sub_821018B0). |
-| `sub_82160D18` | `RouteSections::Before` | Overridden | The section (r3 or a neighbor) whose link ahead is r4, or -1. |
+| `sub_82160170` | `RoutePosition::NotAfter` | Overridden | 1 when r3's route point isn't after r4's. |
+| `sub_82160CB0` | `RaceProgress::CountTime` | Overridden | Racer r5's `time_count` up, its `time` from it (sub_821018B0). |
+| `sub_82160D18` | `RouteSections::Before` | Overridden | The section (r3 or one beside it) whose link ahead is r4, or -1. |
 | `sub_82160E20` | `RouteSections::Beside` | Overridden | 1 when r3 is r4 or beside it. |
 
 ### `native_material_passes`
@@ -1043,32 +1165,32 @@ The part models' materials: counts, records, alpha setters, the paint table's lo
 
 ### `native_replay_snapshots`
 
-The race snapshots' copies, field by field in the originals' order. The replay's own save and restore stay recompiled.
+The race snapshots' copies (`src/game/replay_snapshots.cpp`, types in `src/game/replay_snapshots.h`): each save and restore one list of field copies between the live object and its snapshot, run one way or the other; the snapshot-to-snapshot copies copy every field. The originals' memcpys stay calls. The replay's own save and restore stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82104480` | `Record5232::RestoreTrack` | Overridden | Copy, field by field. |
-| `sub_82103320` | `BodyState::Restore` | Overridden | Copy, field by field. |
-| `sub_82102DE8` | `Member1136::Restore` | Overridden | Copy, field by field. |
-| `sub_82102C30` | `Part464::Restore` | Overridden | Copy, field by field. |
-| `sub_821044F0` | `Record5232::SaveTrack` | Overridden | Copy, field by field. |
-| `sub_82103B68` | `BodyState::Save` | Overridden | Copy, field by field. |
-| `sub_82103638` | `Member1136::Save` | Overridden | Copy, field by field. |
-| `sub_82103480` | `Part464::Save` | Overridden | Copy, field by field. |
-| `sub_82104560` | `Record5232::CopyTrack` | Overridden | Copy, field by field. |
-| `sub_82103CC8` | `BodyState::Copy` | Overridden | Copy, field by field. |
-| `sub_82104330` | `Part464::Copy` | Overridden | Copy, field by field. |
-| `sub_821045D0` | `Member4080::CopyShapes` | Overridden | Copy, field by field. |
-| `sub_82104708` | `Member4080::Copy` | Overridden | Copy, field by field. |
+| `sub_82104480` | `Record5232::RestoreTrack` | Overridden | The snapshot's words, track block (memcpy) and five route positions into the vehicle r4. |
+| `sub_82103320` | `BodyState::Restore` | Overridden | The body state's fields (its layout the same both ways) from r3 to r4. |
+| `sub_82102DE8` | `Member1136::Restore` | Overridden | The member's fields (its four wheel blocks among them) from the snapshot r3 to r4. |
+| `sub_82102C30` | `Part464::Restore` | Overridden | The part's fields and five points from the snapshot r3 to r4. |
+| `sub_821044F0` | `Record5232::SaveTrack` | Overridden | RestoreTrack the other way. |
+| `sub_82103B68` | `BodyState::Save` | Overridden | Restore the other way. |
+| `sub_82103638` | `Member1136::Save` | Overridden | Restore the other way. |
+| `sub_82103480` | `Part464::Save` | Overridden | Restore the other way. |
+| `sub_82104560` | `Record5232::CopyTrack` | Overridden | Every field of the snapshot r4 to r3. |
+| `sub_82103CC8` | `BodyState::Copy` | Overridden | Every field of r4 to r3. |
+| `sub_82104330` | `Part464::Copy` | Overridden | Every field of the snapshot r4 to r3. |
+| `sub_821045D0` | `Member4080::CopyShapes` | Overridden | Two parts' snapshots and the 100 bytes after them. |
+| `sub_82104708` | `Member4080::Copy` | Overridden | Its word, its shapes, three blocks after them. |
 
 ### `native_ui_movies`
 
-The UI movies' file lookups. The movies' update, text, tracks and drawing stay recompiled (`sub_8211D4B8` and `sub_82585C40` are subtick's).
+The UI movies' file lookups, on the types in `game/ui_movies.h`. The movies' text and drawing stay recompiled; `sub_8211D4B8` and `sub_82585C40` keep subtick's overrides, which call ours.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_8211D378` | `UiMovie::DestroyNamedAnimations` | Overridden | Its stores and calls as the original. |
-| `sub_8211E380` | `UiMovie::UiMovie` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_8211D378` | `UiMovie::DestroyNamedAnimations` | Overridden | Its 1,024 named animations destroyed (sub_820913F0), last first. |
+| `sub_8211E380` | `UiMovie::UiMovie` | Overridden | Its members and named animations made, +48, +37040 and its node map cleared. |
 | `sub_8258BCC8` | `Animation::NodeTrack` | Overridden | r3 + 16 x (r4 + 1). |
 | `sub_8258BCD8` | `Track::Key` | Overridden | r3 + 32 x r4 + 16. |
 | `sub_82582CF8` | `VertexOffset` | Overridden | 16 x (r3 + 2 x (r4 + 4)). |
@@ -1083,18 +1205,18 @@ The UI movies' file lookups. The movies' update, text, tracks and drawing stay r
 
 ### `native_data_load`
 
-The boot data's set-up.
+The boot data's set-up. The records' and recordings' layouts are in `game/replay_snapshots.h`; the constructors set their vectors' w words.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82245750` | `LoadingScreen::Load` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82105618` | `InputRecordings::InputRecordings` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_825BF238` | `Replay826D8520::StaticInit` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_825BF340` | `Replay82816E50::StaticInit` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82104410` | `Part464::Part464` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82104800` | `Member4080::Member4080` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82102A10` | `Member1136::Member1136` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82104D90` | `Record5232::Record5232` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82245750` | `LoadingScreen::Load` | Overridden | Its two words at 0x8280EEB0 and 0x8280EE68 cleared, then movies 0x582E, 0x582D and 0x582F loaded (sub_82245658). |
+| `sub_82105618` | `InputRecordings::InputRecordings` | Overridden | Its fourteen records made (two runs of seven). |
+| `sub_825BF238` | `Replay826D8520::StaticInit` | Overridden | The static replay's seven records at 0x826FD440 made, its destructor registered. |
+| `sub_825BF340` | `Replay82816E50::StaticInit` | Overridden | The same for the records at 0x828452D0. |
+| `sub_82104410` | `Part464::Part464` | Overridden | Its vectors' w = 0. |
+| `sub_82104800` | `Member4080::Member4080` | Overridden | Its two parts made as Part464s, then its own vectors' w = 0. |
+| `sub_82102A10` | `Member1136::Member1136` | Overridden | Its vectors' w = 0. |
+| `sub_82104D90` | `Record5232::Record5232` | Overridden | Its own vectors' w (1.0 for the first twenty), its block at +1136 made as a Member1136, then its Member4080. |
 | `sub_820CCAB0` | `Bits224::Fill` | Overridden | Bits 0 to 198 set. |
 | `sub_820CCB08` | `Bits480::Fill` | Overridden | Bits 0 to 453 set. |
 | `sub_82102390` | `RaceData::Create` | Overridden | The race data (827,904 bytes) made into [0x826B580C]. |
@@ -1109,8 +1231,8 @@ The race sounds' handlers. The sounds' ticks stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82173B18` | `RaceSounds::ResumeCars` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82173D90` | `RaceSounds::OnEffectsBankLoaded` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82173B18` | `RaceSounds::ResumeCars` | Overridden | The music player's `sub_8210E440`, seven times. |
+| `sub_82173D90` | `RaceSounds::OnEffectsBankLoaded` | Overridden | [0x826C7E70] = 1. |
 | `sub_82173760` | `RaceSounds::SetListener` | Overridden | The sound manager's slots 26, 25 and 27. |
 | `sub_82173BE0` | `RaceSounds::OnStageCountdown` | Overridden | The effects' volume back, the cars set up. |
 | `sub_82173BB8` | `RaceSounds::OnAbortDone` | Overridden | The same, the volume last. |
@@ -1123,16 +1245,17 @@ The race sounds' handlers. The sounds' ticks stay recompiled.
 
 ### `native_race_screens`
 
-The race screens' small parts. The screens' ticks and draws stay recompiled.
+The race screens' small parts (`src/game/race_screens.cpp`, types in `src/game/race_screens.h`). The screens' ticks and draws stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82209840` | `ScreenPages::Init` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_822159C8` | `RaceDialog::Destroy` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82218140` | `AfterRaceMenu::Close` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_8220B5C8` | `PauseMenu::Close` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82209840` | `ScreenPages::Init` | Overridden | +0, +4 and +8 = r4, +12 and +20 = -1, +24 = 0. |
+| `sub_822159C8` | `RaceDialog::Destroy` | Overridden | Its list ([0x826C7F9C]) destroyed (`sub_82209958`), its three blocks freed (VirtualFree), the three globals cleared. |
+| `sub_82218140` | `AfterRaceMenu::Close` | Overridden | `sub_82209958` on its list ([0x826C7FBC]). |
+| `sub_8220B5C8` | `PauseMenu::Close` | Overridden | `sub_8220B3D8` on r3. |
 | `sub_82209810` | `ScreenPages::Go` | Overridden | r4 the page, r5 the next (-1 none), r6 its own. |
 | `sub_822097D0` | `ScreenPages::Finish` | Overridden | The pending page taken. |
+| `sub_8242B828` | `MenuList::Selection` | Overridden | The word at +16. |
 | `sub_822099C8` | `MenuList::SetSelection` | Overridden | +16 = r4, +20 the old one. |
 | `sub_822099A8` | `MenuList::SetEnabled` | Overridden | The entry r4's flag = r5. |
 | `sub_822099B8` | `MenuList::IsEnabled` | Overridden | The entry r4's flag. |
@@ -1151,13 +1274,13 @@ The race HUD object. The UI movies and the HUD's set-up stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82210028` | `RaceHud::ClearWarning` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_8220FFF8` | `RaceHud::StartCountdown` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_822104A0` | `RaceHud::StartMovie1` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82210600` | `RaceHud::FinishMovie1` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82210880` | `RaceHud::RunMovie1` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_8220FA90` | `RaceScreens::DrawPauseMenu` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_8220FA98` | `RaceScreens::DrawAfterRaceMenu` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82210028` | `RaceHud::ClearWarning` | Overridden | +468 (the warning) = 0. |
+| `sub_8220FFF8` | `RaceHud::StartCountdown` | Overridden | +436 = 1, then the countdown movie (+612) started (`sub_8211DB38`, r4 = -1, r5 to r9 0). |
+| `sub_822104A0` | `RaceHud::StartMovie1` | Overridden | The movie at +628 started (`sub_8211DC88`, then `sub_8211DFA0`). |
+| `sub_82210600` | `RaceHud::FinishMovie1` | Overridden | `sub_8211E0E0` on the movie at +628. |
+| `sub_82210880` | `RaceHud::RunMovie1` | Overridden | UiMovie::Run on the movie at +628. |
+| `sub_8220FA90` | `RaceScreens::DrawPauseMenu` | Overridden | The pause menu's (+1012) draw, `sub_8220D848`. |
+| `sub_8220FA98` | `RaceScreens::DrawAfterRaceMenu` | Overridden | The after-race menu's (+1020) draw, `sub_822197F0`. |
 | `sub_82210BA0` | `RaceHud::SetBoost` | Overridden | Node 5's +36 = the boost. |
 | `sub_82210A90` | `RaceHud::ShowGauge` | Overridden | r5 into nodes 12 + r4 and 9 + r4. |
 | `sub_82210B38` | `RaceHud::SetGear` | Overridden | The gear into node 11's frame. |
@@ -1171,16 +1294,16 @@ The race HUD object. The UI movies and the HUD's set-up stay recompiled.
 
 ### `native_course_scenery`
 
-The course scenery's pool objects and lookups. `sub_820F1038` keeps subtick's override, which calls ours.
+The course scenery's pool objects and lookups, on the types in `game/course_scenery.h`. `sub_820F1038` keeps subtick's override, which calls ours.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820FB8B8` | `PoolObject::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820F18B0` | `ModelList::Init` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820F1310` | `Scenery::ClearGlobal` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820F20C0` | `CourseSet::InitParts` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820F0FC8` | `CourseSet::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820FB798` | `PoolObject::AllocData` | Overridden | r4 bytes (to 64) from its data. |
+| `sub_820FB8B8` | `PoolObject::Reset` | Overridden | No flags or key, its data unused. |
+| `sub_820F18B0` | `ModelList::Init` | Overridden | Its fixed list reset, its word cleared. |
+| `sub_820F1310` | `Scenery::ClearGlobal` | Overridden | [0x826B51F4] cleared. |
+| `sub_820F20C0` | `CourseSet::InitParts` | Overridden | Its XPR cleared, its model made, its six lists initialized, its last words cleared. |
+| `sub_820F0FC8` | `CourseSet::Reset` | Overridden | Its XPR reset, model released and lists reset, then its pool object's flags, key and data. |
+| `sub_820FB798` | `PoolObject::AllocData` | Overridden | r3 the object's data: r4 bytes (to 64) from it. |
 | `sub_820FB878` | `PoolObject::ClearLoadFlags` | Overridden | 0x3C cleared. |
 | `sub_820FB888` | `PoolObject::MarkLoaded` | Overridden | 0x2 cleared, 0x8 set. |
 | `sub_824A7668` | `PoolObject::Key` | Overridden | No key (shared). |
@@ -1205,97 +1328,97 @@ The course scenery's pool objects and lookups. `sub_820F1038` keeps subtick's ov
 
 ### `native_scene_loaders`
 
-The scene loaders' constructors, destructors, resets and load checks. The loads stay recompiled.
+The scene loaders (`src/game/scene_loaders.cpp`, types in `src/game/scene_loads.h`): the loads' constructors and destructors, the wheels' and pool 4 objects' resets and releases, and the load checks. The loads stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820D3A80` | `CarModelLoads::CarModelLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D3AE0` | `CarModelLoads::~CarModelLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D5CB8` | `CockpitLoads::CockpitLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D5D38` | `CockpitLoads::~CockpitLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D78F0` | `TrafficLoads::TrafficLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D7970` | `TrafficLoads::~TrafficLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D8C28` | `WheelsLoads::WheelsLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D8CD8` | `WheelsLoads::~WheelsLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D6C38` | `CarPartsLoads::CarPartsLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D69B0` | `CarParts::Release` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D6C98` | `CarPartsLoads::~CarPartsLoads` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D8810` | `Wheels::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D65F8` | `Pool4Object::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D66D0` | `Pool4Object::Release` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D8B30` | `Wheels::Release` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D6710` | `Pool4Object::SetRecord` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D38C8` | `CarModel::IsLoaded` | Overridden | 0 while either load is 2; else its state isn't 2. |
-| `sub_820D66B8` | `Pool4Object::IsLoaded` | Overridden | 1 unless +100 is 2. |
-| `sub_8257C838` | `XPR::Count` | Overridden | +20, or 0 without a header. |
+| `sub_820D3A80` | `CarModelLoads::CarModelLoads` | Overridden | Its skeleton (+32), two XPRs (+272) and two XPR lists (+320, reserved size -1) made. |
+| `sub_820D3AE0` | `CarModelLoads::~CarModelLoads` | Overridden | The same destroyed, the last first. |
+| `sub_820D5CB8` | `CockpitLoads::CockpitLoads` | Overridden | A car model's loads, then six part models at +512. |
+| `sub_820D5D38` | `CockpitLoads::~CockpitLoads` | Overridden | The part models destroyed, the last first, then the model loads. |
+| `sub_820D78F0` | `TrafficLoads::TrafficLoads` | Overridden | Skeleton at +48, XPRs at +288, lists at +336, six part models at +528. |
+| `sub_820D7970` | `TrafficLoads::~TrafficLoads` | Overridden | The same destroyed, the last first. |
+| `sub_820D8C28` | `WheelsLoads::WheelsLoads` | Overridden | Part models at +48, +1024 and +2144 (two each), XPRs at +2000, lists at +2048. |
+| `sub_820D8CD8` | `WheelsLoads::~WheelsLoads` | Overridden | The same destroyed, the last first. |
+| `sub_820D6C38` | `CarPartsLoads::CarPartsLoads` | Overridden | The 216 part models (at +5184, after their 216 load slots) made, w = 1 on the 30 points at +105424. |
+| `sub_820D69B0` | `CarParts::Release` | Overridden | For each of the 216 parts: its load slot freed (`LoadSlot::Free`), its model released and cleared. r3 is 96 bytes before the loads. |
+| `sub_820D6C98` | `CarPartsLoads::~CarPartsLoads` | Overridden | The 216 part models destroyed, the last first. |
+| `sub_820D8810` | `Wheels::Reset` | Overridden | +24 = 0, +3268 = [0x826B2B20] (read live), `WheelsRecord::Reset` on +28, `sub_820D8760` on the loads at +192. |
+| `sub_820D65F8` | `Pool4Object::Reset` | Overridden | +24 = 0, `Pool4Record::Reset` on +28, `LoadSlot::Reset` on +80, the part model at +112 released and cleared, +576 = [0x826B2B20] (read live). |
+| `sub_820D66D0` | `Pool4Object::Release` | Overridden | Its slot freed, its model released, then `Pool4Object::Reset`. |
+| `sub_820D8B30` | `Wheels::Release` | Overridden | The eight load slots of its loads freed, then `Wheels::Reset`. |
+| `sub_820D6710` | `Pool4Object::SetRecord` | Overridden | memcpy of the 52-byte record at r4 into +28. |
+| `sub_820D38C8` | `CarModel::IsLoaded` | Overridden | 0 while either of the two loads at +3952 is loading (state 2); else whether its own load's (+3728) state isn't 2. |
+| `sub_820D66B8` | `Pool4Object::IsLoaded` | Overridden | Whether its load's state (+100) isn't 2. |
+| `sub_8257C838` | `XPR::Count` | Overridden | +20, or 0 without a header (+16 = 0). |
 
 ### `native_scene`
 
-The scene's set-ups. Its updates stay recompiled.
+The scene's set-ups, on `SceneAssets` and `CarScene` (`game/scene.h`). Its updates stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820D0AE0` | `SceneSetUp::SceneSetUp` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D0750` | `FreePagesIn` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C4E00` | `SceneAssets::SceneAssets` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C4F58` | `SceneAssets::~SceneAssets` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C8760` | `CarScene::CarScene` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_82579750` | `List::~List` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820C4A80` | `SceneAssets::Release` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_820D0AE0` | `SceneSetUp::SceneSetUp` | Overridden | +36 and +40 cleared. |
+| `sub_820D0750` | `FreePagesIn` | Overridden | The pages at [r3] freed (VirtualFree). |
+| `sub_820C4E00` | `SceneAssets::SceneAssets` | Overridden | Its XPRs and records cleared, its XPR lists and part models made. |
+| `sub_820C4F58` | `SceneAssets::~SceneAssets` | Overridden | Its lists, XPRs and part models destroyed, last first. |
+| `sub_820C8760` | `CarScene::CarScene` | Overridden | Its assets made, its eight entries cleared, its 22 vectors' w = 1.0. |
+| `sub_82579750` | `List::~List` | Overridden | sub_825795A8 on it. |
+| `sub_820C4A80` | `SceneAssets::Release` | Overridden | Its load slots freed and pages released, its last part model released, then sub_820C4880. |
 
 ### `native_second_set`
 
-The scene parts' point tables, the models' streams and the morph's run.
+The scene parts' point records (`src/game/second_set.cpp`, types in `src/game/scene_points.h`): their constructors and destructors for the car body's parts, the cockpit, the interior, the lights, the traffic cars and the wheels, the scene objects' resets and the finds; the models' stream getters and the morph's run. Each group of 240-byte point records is made with `PointRecord::PointRecord`, then given its defaults (recompiled; they name the shapes, from writable tables in `.data`). The finds look each record up in a model by node (`sub_820D0090`) or shape (`sub_820CE8F0`); some then link it (`sub_820D16B0`, a distance in f1). The defaults, the searches, the models' draws and the morph's blend stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820DF160` | `PartsPoints::InitLeftDoor` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DF1B8` | `PartsPoints::InitRightDoor` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E0F48` | `PartsPoints::InitHeadlights` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DFBB8` | `PartsPoints::InitMufflers` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E25D8` | `PartsPoints::PartsPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DBE00` | `CockpitPoints::CockpitPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E4BC8` | `InteriorPoints::InteriorPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DD970` | `LightPoints::LightPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC518` | `LightPoints::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E64D8` | `TrafficPoints::TrafficPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E5470` | `TrafficPoints::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E8668` | `WheelPoints::InitTire` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E95A8` | `WheelPoints::InitRimA` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820EA4D8` | `WheelPoints::InitRimB` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820EAF18` | `WheelPoints::InitBrakes` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820EC880` | `WheelPoints::WheelPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E81B0` | `WheelPoints::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E27D8` | `PartsPoints::~PartsPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DBEC8` | `CockpitPoints::~CockpitPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E4CB0` | `InteriorPoints::~InteriorPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DDA08` | `LightPoints::~LightPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820EC8F0` | `WheelPoints::~WheelPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E6570` | `TrafficPoints::~TrafficPoints` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DE2B0` | `PartsPoints::FindRearSpoiler` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DE378` | `PartsPoints::FindBonnet` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DE430` | `PartsPoints::FindLeftDoor` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DE6C8` | `PartsPoints::FindRightDoor` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DE7E8` | `PartsPoints::FindDoors` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DEA20` | `PartsPoints::FindTailLights` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DEAE8` | `PartsPoints::FindFenders` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DECA0` | `PartsPoints::FindCabin` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DB778` | `CockpitPoints::FindHeadlights` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E2E60` | `InteriorPoints::FindMeters` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E3070` | `InteriorPoints::FindSeats` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC468` | `LightPoints::FindGroup` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC570` | `LightPoints::Find` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E5128` | `TrafficPoints::FindBody` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E5328` | `TrafficPoints::FindHeadlights` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E53F8` | `TrafficPoints::FindTailLights` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E00B8` | `SceneParts::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DBA90` | `SceneCockpit::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E3310` | `SceneInterior::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC6B0` | `SceneLights::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E5520` | `SceneTraffic::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E8490` | `SceneWheels::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D9DD0` | `SceneModelBlock::SceneModelBlock` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D0030` | `PointRecord::PointRecord` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_820DF160` | `PartsPoints::InitLeftDoor` | Overridden | 25 records, w = 1 on the four points at +6016, the left door's defaults (`sub_820DE3C8`). |
+| `sub_820DF1B8` | `PartsPoints::InitRightDoor` | Overridden | The same with the right door's defaults (`sub_820DE638`). |
+| `sub_820E0F48` | `PartsPoints::InitHeadlights` | Overridden | 13 records, w = 1 on the four points after them, the defaults (`sub_820DF2E8`). |
+| `sub_820DFBB8` | `PartsPoints::InitMufflers` | Overridden | w = 1 on 16 points, then 5 records, the defaults (`sub_820DEE88`). |
+| `sub_820E25D8` | `PartsPoints::PartsPoints` | Overridden | The car body's groups in order (front bumper 11, cooler, rear bumper 7, side skirts, rear spoiler 3, bonnet 2, the doors, both doors 23, three singles, headlights, tail lights 15, fenders 7, cabin 5, engine 2, mufflers, shadows 4), each made and given its defaults. |
+| `sub_820DBE00` | `CockpitPoints::CockpitPoints` | Overridden | Its groups (3, 2, 1, 2, 1, 8 records) made and given their defaults. |
+| `sub_820E4BC8` | `InteriorPoints::InteriorPoints` | Overridden | A record, then five groups (12, 22, 4, 4, 4 records after a 16-byte header) made and given their defaults. |
+| `sub_820DD970` | `LightPoints::LightPoints` | Overridden | Three groups of 18 records (after a 16-byte header) made and given their defaults. |
+| `sub_820DC518` | `LightPoints::Reset` | Overridden | The three groups' defaults again, +8..+40 = 0. |
+| `sub_820E64D8` | `TrafficPoints::TrafficPoints` | Overridden | Body (6), headlights (7) and tail lights (12) made and given their defaults. |
+| `sub_820E5470` | `TrafficPoints::Reset` | Overridden | +0 = 0, the three groups' defaults again. |
+| `sub_820E8668` | `WheelPoints::InitTire` | Overridden | 6 records at +368, w = 1 on the two points after them, the tire's defaults (`sub_820E70A0`). |
+| `sub_820E95A8` | `WheelPoints::InitRimA` | Overridden | 7 records at +32, two points, rim A's defaults (`sub_820E7500`). |
+| `sub_820EA4D8` | `WheelPoints::InitRimB` | Overridden | The same with rim B's defaults (`sub_820E77F0`). |
+| `sub_820EAF18` | `WheelPoints::InitBrakes` | Overridden | 12 records at +32, two points, the brakes' defaults (`sub_820E7B78`). |
+| `sub_820EC880` | `WheelPoints::WheelPoints` | Overridden | Two tires, two of each rim, two brakes. |
+| `sub_820E81B0` | `WheelPoints::Reset` | Overridden | +0..+24 = 0, each part's defaults again, then +2172, +5468, +8956, +13644 = 0. |
+| `sub_820E27D8` | `PartsPoints::~PartsPoints` | Overridden | Every record destroyed (the empty destructor `sub_821611F0`), the last first. |
+| `sub_820DBEC8` | `CockpitPoints::~CockpitPoints` | Overridden | The same. |
+| `sub_820E4CB0` | `InteriorPoints::~InteriorPoints` | Overridden | The same. |
+| `sub_820DDA08` | `LightPoints::~LightPoints` | Overridden | The same. |
+| `sub_820EC8F0` | `WheelPoints::~WheelPoints` | Overridden | The same. |
+| `sub_820E6570` | `TrafficPoints::~TrafficPoints` | Overridden | The same. |
+| `sub_820DE2B0` | `PartsPoints::FindRearSpoiler` | Overridden | 3 records by shape; records 2 and 1 linked (5.0). |
+| `sub_820DE378` | `PartsPoints::FindBonnet` | Overridden | Record 0 by node, record 1 by shape. |
+| `sub_820DE430` | `PartsPoints::FindLeftDoor` | Overridden | 25 records (0 and 1 by node); records 7 to 10 linked (5.0). |
+| `sub_820DE6C8` | `PartsPoints::FindRightDoor` | Overridden | 25 records (0 and 1 by node). |
+| `sub_820DE7E8` | `PartsPoints::FindDoors` | Overridden | 23 records by shape; records 3 to 10 linked (5.0). |
+| `sub_820DEA20` | `PartsPoints::FindTailLights` | Overridden | 15 records (0 to 7 by node); records 8 to 12 linked (5.0). |
+| `sub_820DEAE8` | `PartsPoints::FindFenders` | Overridden | 7 records by shape; records 3 and 4 linked (5.0). |
+| `sub_820DECA0` | `PartsPoints::FindCabin` | Overridden | 5 records by shape; records 0 and 1 linked (5.0). |
+| `sub_820DB778` | `CockpitPoints::FindHeadlights` | Overridden | 8 records (0 to 3 by node); records 5 and 6 linked (1.0). |
+| `sub_820E2E60` | `InteriorPoints::FindMeters` | Overridden | The group's 22 records (0 to 6 by node). |
+| `sub_820E3070` | `InteriorPoints::FindSeats` | Overridden | The group's 4 records (0 and 1 by node). |
+| `sub_820DC468` | `LightPoints::FindGroup` | Overridden | The group's 18 records each by shape, then linked (1.0). |
+| `sub_820DC570` | `LightPoints::Find` | Overridden | `LightPoints::FindGroup` on each of the three groups. |
+| `sub_820E5128` | `TrafficPoints::FindBody` | Overridden | The 6 records by shape in the models r7, r4, r6, r6, r4, r5. |
+| `sub_820E5328` | `TrafficPoints::FindHeadlights` | Overridden | 7 records (0 to 3 by node); record 5 linked (3.0). |
+| `sub_820E53F8` | `TrafficPoints::FindTailLights` | Overridden | 12 records (0 to 7 by node); records 9 and 10 linked (3.0). |
+| `sub_820E00B8` | `SceneParts::Reset` | Overridden | `sub_820D31A0` on +108, the parts' defaults (`sub_820DFC98`) on +176, its words cleared, +37284 = [0x826B2B24] (read live), memset of 68 at +32. |
+| `sub_820DBA90` | `SceneCockpit::Reset` | Overridden | Its words cleared, +4316 = [0x826B2B24] (read live), `sub_820D3100` on +36, the cockpit's defaults (`sub_820DB880`) on +192, +4272 = the address of +36. |
+| `sub_820E3310` | `SceneInterior::Reset` | Overridden | Its words cleared, `sub_820D3488` on +40, the interior's defaults (`sub_820E31A0`) on +160, +11668 = [0x826B2B24] (read live). |
+| `sub_820DC6B0` | `SceneLights::Reset` | Overridden | Its words cleared, `Pool4Record::Reset` on +32, `LightPoints::Reset` on +96, +13160 = [0x826B2B24] (read live); the points' and each group's first word = the address of +32. |
+| `sub_820E5520` | `SceneTraffic::Reset` | Overridden | `sub_820D0848` on +32, `TrafficPoints::Reset` on +3728, +9760..+9792 = 0. |
+| `sub_820E8490` | `SceneWheels::Reset` | Overridden | Its words cleared, +16784 = [0x826B2B24] (read live), `WheelsRecord::Reset` on +32, `WheelPoints::Reset` on +192. |
+| `sub_820D9DD0` | `SceneModelBlock::SceneModelBlock` | Overridden | w = 1 on its 38 points. |
+| `sub_820D0030` | `PointRecord::PointRecord` | Overridden | w = 1 on its nine points, then `PointRecord::Clear` (`sub_820CE7C8`). |
 | `sub_8257A610` | `Morph::Run` | Overridden | r4's +8 and +12 = r5 and r6, then Morph::Blend. |
 | `sub_820CE698` | `PointRecord::SetNode` | Overridden | r4's name to +160. |
 | `sub_820CE6C0` | `PointRecord::SetShape` | Overridden | r4's name to +192. |
@@ -1306,20 +1429,20 @@ The scene parts' point tables, the models' streams and the morph's run.
 
 ### `native_load_poll`
 
-The records and paints set as loads finish, the car model's load checks.
+The records and paints set as loads finish, the car model's ready check (`src/game/load_poll.cpp`, on the types in `src/game/scene_loads.h` and `src/game/scene_points.h`). The polls and the paints' own functions stay recompiled.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_820D8B88` | `Wheels::SetRecord` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D8B98` | `Wheels::SetCaliperTexture` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC7E8` | `SceneLights::SetRecord` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DC838` | `SceneLights::ApplyRecord` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E04B0` | `SceneParts::ApplyPaint` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E3E18` | `SceneInterior::ApplyPaint` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820DBDA8` | `SceneCockpit::ApplyPaint` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820E5DC0` | `SceneTraffic::ApplyPaint` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D32A0` | `GaugeTableEntry` | Overridden | The gauge r3's entry for level r4. |
-| `sub_820D3CE8` | `CarModel::IsReady` | Overridden | IsLoaded for a record of kind 0 or 1, else 0. |
+| `sub_820D8B88` | `Wheels::SetRecord` | Overridden | memcpy of the 156-byte record at r4 into +28. |
+| `sub_820D8B98` | `Wheels::SetCaliperTexture` | Overridden | The record's caliper texture (+116) set on the two brake models (+2336, +2800; `sub_820D1420`, r5 = -1). |
+| `sub_820DC7E8` | `SceneLights::SetRecord` | Overridden | memcpy of the 52-byte record at r4 into +32, then `Pool4Object::SetRecord` on the object at +28. |
+| `sub_820DC838` | `SceneLights::ApplyRecord` | Overridden | +104..+136 = 0, `SceneLights::SetRecord`, then the record's texture (+32) set on the model at +13152. |
+| `sub_820E04B0` | `SceneParts::ApplyPaint` | Overridden | `sub_820D7038` on the object at +104. |
+| `sub_820E3E18` | `SceneInterior::ApplyPaint` | Overridden | `sub_820D74F0` on the object at +36. |
+| `sub_820DBDA8` | `SceneCockpit::ApplyPaint` | Overridden | `sub_820D5FD0` on the object at +32, then `SceneInterior::ApplyPaint` on the one at +28 (r4 to r9 as they came). |
+| `sub_820E5DC0` | `SceneTraffic::ApplyPaint` | Overridden | `sub_820D7AC8` on the object at +9760. |
+| `sub_820D32A0` | `GaugeTableEntry` | Overridden | The gauge r3's entry for level r4 (16-byte entries at 0x820035E0, the second of two for levels 3 and up). |
+| `sub_820D3CE8` | `CarModel::IsReady` | Overridden | IsLoaded for a record of kind 0 or 1 ([+7256] + 8), else 0. |
 
 ### `native_car_makers`
 
@@ -1327,9 +1450,9 @@ The garage cars' resets.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_82110370` | `GarageCar::Reset` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_825BF2C8` | `GarageCars::StaticInit` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_820D06C0` | `CarRecord::ResetBytes` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_82110370` | `GarageCar::Reset` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_825BF2C8` | `GarageCars::StaticInit` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_820D06C0` | `CarRecord::ResetBytes` | Overridden | Its fields set and its calls made, in the original's order. |
 
 ### `native_texture_compression`
 
@@ -1337,12 +1460,12 @@ The blitter's constructor and the codec's destructor.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
-| `sub_8235F798` | `Blitter::Blitter` | Overridden | Its stores as a table, its calls in their place. |
-| `sub_823D6F20` | `ImageCodec::~ImageCodec` | Overridden | Its stores as a table, its calls in their place. |
+| `sub_8235F798` | `Blitter::Blitter` | Overridden | Its fields set and its calls made, in the original's order. |
+| `sub_823D6F20` | `ImageCodec::~ImageCodec` | Overridden | Its fields set and its calls made, in the original's order. |
 
 ### `native_save_interface`
 
-The save interface's queries. The content calls stay recompiled.
+The save interface's queries (`src/game/save_interface.cpp`, types in `src/game/save_interface.h`). The content calls stay recompiled. `SaveGame::Write` (`sub_8228CEE8`) is here too, called from autosave's override.
 
 | Address | Name | Status | Notes |
 |---|---|---|---|
@@ -1367,6 +1490,647 @@ The save interface's queries. The content calls stay recompiled.
 | `sub_820A0560` | `SaveInterface::Pending` | Overridden | Slot 8. |
 | `sub_820A05B8` | `SaveInterface::Device` | Overridden | Slot 2. |
 | `sub_820A0610` | `SaveInterface::SaveAt` | Overridden | Slot 5. |
+| `sub_8236FD60` | `word +92` | Overridden | The word at +92. |
+| `sub_82473DE8` | `word +216` | Overridden | The word at +216 (a Users' count). |
+
+### `native_std_list`
+
+The C++ library's list of pointers (a list: +4 its head node, +8 its size; a node: next, previous, value). operator new and delete stay recompiled; the error paths run the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820993A8` | `PtrList::AllocateNodes` | Overridden | r3 the count: count x 12 bytes from operator new (`sub_8258C000`). |
+| `sub_82099A40` | `PtrList::IncSize` | Overridden | r3 the list, r4 how many: the size up by that. |
+| `sub_82099420` | `PtrList::PtrList` | Overridden | A head node linked to itself, the size 0. Returns the list. |
+| `sub_82099AE0` | `PtrList::Insert` | Overridden | r4 the iterator to put it before, r5 the value's address: a node linked in, the size up by one. |
+| `sub_82118970` | `PtrList::Erase` | Overridden | r3 where the result iterator goes, r4 the list, r5 the iterator: its node unlinked and freed (`sub_8258C868`), the size down by one; the result is at the next node. |
+
+### `native_std_string`
+
+The C++ library's narrow string (28 bytes: +4 the text in place under a capacity of 16, else its block; +20 the length; +24 the capacity). operator new and delete, memcpy_s (`sub_8258C9F0`), erase (`sub_82091460`), append from a string (`sub_820A6E18`), replace (`sub_82578698`) and the wildcard search (`sub_82577FC0`) stay recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820913F0` | `std::string::_Tidy` | Overridden | r4 whether built, r5 the length kept: a block's text moved into place and the block freed; the length r5, the capacity 15. |
+| `sub_82091378` | `std::allocator<char>::allocate` | Overridden | r3 bytes from operator new. |
+| `sub_82091520` | `std::string::_Copy` | Overridden | r4 the capacity wanted, r5 the text kept: a new block (16n - 1, or half as much again as the old), the text copied. |
+| `sub_82091608` | `std::string::_Grow` | Overridden | r4 the length wanted, r5 whether to trim: a new block, a tidy into place, or the text emptied. Returns whether the length is above 0. |
+| `sub_820917E8` | `std::string::assign` | Overridden | r4 another string, r5 where in it, r6 how much. Returns the string. |
+| `sub_820918D0` | `std::string::assign` | Overridden | r4 text, r5 how much. Returns the string. |
+| `sub_820A6F18` | `std::string::append` | Overridden | r4 text, r5 how much. Returns the string. |
+| `sub_82578268` | `std::string::string` | Overridden | Empty. |
+| `sub_82091AD8` | `std::string::string` | Overridden | From r4's text. |
+| `sub_82578A50` | `std::string::string` | Overridden | From r4's text, with an allocator (the one above). |
+| `sub_825788C0` | `std::string::string` | Overridden | From r4's string, r5 where in it, r6 how much. |
+| `sub_825781F0` | `String::Find` | Overridden | r4 the pattern, r5 and r6 where the match's position and length go, r7 where to start: the wildcard search over the text. Returns the match's address or 0. |
+| `sub_82578908` | `String::ReplaceAll` | Overridden | r4 the pattern, r5 the text to put in, r6 how many matches at most (0: all). Returns the string's text. |
+
+### `native_c_runtime`
+
+The C runtime's small functions. The heap, the formatters, the parsers, the math kernels and the copies stay recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82091278` | `vector constructor iterator` | Overridden | r3 the first object, r4 a size, r5 how many, r6 the constructor, called on each in order. |
+| `sub_820900C0` | `vector destructor iterator` | Overridden | The same with a destructor, from the last back. |
+| `sub_8258F2F8` | `wcslen` | Overridden |  |
+| `sub_8258D630` | `wcscmp` | Overridden | -1, 0 or 1. |
+| `sub_82592128` | `__ascii_strnicmp` | Overridden | At most r5 bytes, A to Z taken as a to z: the difference of the first that differ. |
+| `sub_8258F558` | `rand` | Overridden | The thread's seed (`sub_8258FF70`'s data, +20) x 214013 + 2531011; returns bits 16 to 30. |
+
+### `native_action_mappers`
+
+The action mappers' set-ups, resets, small setters, copies and getters (`src/game/action_mappers.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8210AF88` | `InputClient::InputClient` | Overridden | 4 stores. |
+| `sub_8210AFD8` | `InputClientList::InputClientList` | Overridden | 12 stores. |
+| `sub_8210B028` | `InputClientList::Add` | Overridden | No stores; calls `sub_82582078`. |
+| `sub_8210C1B0` | `ActionMapper::ResetStages` | Overridden | 150 stores; calls `sub_8210BBE8`, `sub_8210BC70`. |
+| `sub_82581DE0` | `ClientNode::ClientNode` | Overridden | 3 stores. |
+| `sub_82581ED0` | `ClientList::ClientList` | Overridden | 10 stores. |
+
+### `native_ai_drivers`
+
+The ai drivers' set-ups, resets, small setters, copies and getters (`src/game/ai_drivers.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820C9488` | `CarInput::Clear` | Overridden | 10 stores. |
+| `sub_82139548` | `AiDriver::Reset` | Overridden | 15 stores; calls `sub_8213CF88`, `sub_82144330`, `sub_82145048`. |
+| `sub_821397E8` | `AiDriver::InitPath` | Overridden | 246 stores. |
+| `sub_82139838` | `AiDrivers::DestroyRings` | Overridden | No stores; calls `sub_820900C0`. |
+| `sub_8213B190` | `AiPath::ClearCornerKind` | Overridden | 1 stores. |
+| `sub_8213B1A0` | `AiPath::ClearCorners` | Overridden | 113 stores. |
+| `sub_8213CF88` | `AiPath::ResetFor` | Overridden | 6 stores; calls `sub_8213BEB8`. |
+| `sub_8213DFA0` | `AiSkill::Reset` | Overridden | 18 stores. |
+| `sub_8213E008` | `AiSkill::Clear` | Overridden | 20 stores. |
+| `sub_82144298` | `AiDriver::ClearOthers` | Overridden | 103 stores. |
+| `sub_82144E18` | `AiDriver::ClearCarState` | Overridden | 126 stores. |
+
+### `native_app_start_up`
+
+The app start up' set-ups, resets, small setters, copies and getters (`src/game/app_start_up.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8209AD00` | `SetAppInterface84` | Overridden | 1 stores. |
+| `sub_8209AD20` | `ReadError::SetApp` | Overridden | 1 stores. |
+| `sub_8209F6B8` | `SetRenderApp` | Overridden | 1 stores. |
+| `sub_820A7568` | `AppCameraEntry::AppCameraEntry` | Overridden | 4 stores. |
+| `sub_8225D588` | `ClearWords8110` | Overridden | 2 stores. |
+| `sub_82094A30` |  | Overridden | The word at +112. |
+| `sub_82094A38` |  | Overridden | The word at +108. |
+
+### `native_app_states`
+
+The app states' set-ups, resets, small setters, copies and getters (`src/game/app_states.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820950D8` | `App::SendMessage` | Overridden | No stores; calls `sub_82094B08`. |
+| `sub_820ACFA0` | `StateLayer::StateLayer` | Overridden | 4 stores; calls `sub_82099420`, `sub_820ACF40`. |
+| `sub_820AD5E8` | `StateLayer state slot 5` | Overridden | No stores; calls `sub_820AD508`. |
+| `sub_820ADA60` | `StateLayer::StateLayer` | Overridden | 4 stores; calls `sub_82099420`, `sub_820ACF40`, `sub_820AD958`. |
+| `sub_820ADFA8` | `StateLayer state slot 8` | Overridden | No stores; calls `sub_820ADD88`. |
+| `sub_820ADFB0` | `StateLayer state slot 9` | Overridden | No stores; calls `sub_820ADE98`. |
+| `sub_820AE040` | `AppStates::OnUpdate` | Overridden | No stores; calls `sub_820ADD88`. |
+| `sub_820AE048` | `AppStates::OnUpdateToggled` | Overridden | No stores; calls `sub_820ADE98`. |
+
+### `native_archive`
+
+The archive' set-ups, resets, small setters, copies and getters (`src/game/archive.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_822925A8` | `ListNode::ListNode` | Overridden | 2 stores. |
+| `sub_822925C0` | `List::List` | Overridden | 5 stores. |
+
+### `native_boot_mode`
+
+The boot mode' set-ups, resets, small setters, copies and getters (`src/game/boot_mode.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82107480` | `ScreenMachine::ScreenMachine` | Overridden | 10 stores; calls `sub_82107230`. |
+
+### `native_c_runtime` (tables)
+
+More of the c runtime (`src/game/c_runtime.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_821611F0` |  | Overridden | No stores. |
+| `sub_8258C530` | `_cfltcvt_init` | Overridden | 10 stores. |
+| `sub_8258FD88` | `_init_pointers` | Overridden | 6 stores. |
+| `sub_82590A78` | `_vsnprintf` | Overridden | No stores; calls `sub_82590980`. |
+| `sub_82592BB8` |  | Overridden | 1 stores. |
+| `sub_82594890` |  | Overridden | 1 stores. |
+| `sub_82595730` |  | Overridden | 1 stores. |
+| `sub_82598FB8` |  | Overridden | 1 stores. |
+| `sub_82598FD0` |  | Overridden | 1 stores. |
+
+### `native_camera_modes`
+
+The camera modes' set-ups, resets, small setters, copies and getters (`src/game/camera_modes.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8214E6E8` | `CameraAnims::Clear` | Overridden | 1 stores. |
+| `sub_8220F5D0` | `RivalLogo::RivalLogo` | Overridden | 5 stores; calls `sub_8220F490`. |
+
+### `native_cameras`
+
+The cameras' set-ups, resets, small setters, copies and getters (`src/game/cameras.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8209FAB0` | `CameraPasses::Init` | Overridden | 15 stores; calls `sub_8209FA58`. |
+| `sub_820A0B50` | `CameraPass::Enable` | Overridden | 1 stores. |
+| `sub_820AADF8` | `Viewport::Update` | Overridden | No stores; calls `sub_820AA508`. |
+
+### `native_car_models`
+
+The car models' set-ups, resets, small setters, copies and getters (`src/game/car_models.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820D04F0` | `LoadSlot::Reset` | Overridden | 6 stores. |
+| `sub_820EE9C8` | `TGAReader::TGAReader` | Overridden | 18 stores; calls `sub_820913F0`, `sub_820918D0`. |
+| `sub_820EEA30` | `TGAHeader::Clear` | Overridden | 12 stores. |
+| `sub_820EEBA8` | `TGAImage::Clear` | Overridden | 6 stores. |
+
+### `native_car_physics` (tables)
+
+More of the car physics (`src/game/car_physics.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820AFA60` | `Matrix::CopyRows` | Overridden | A copy between its arguments, field by field. |
+| `sub_820B6730` | `RigidBody::SetFloat48` | Overridden | A copy between its arguments, field by field. |
+
+### `native_car_sounds`
+
+The car sounds' set-ups, resets, small setters, copies and getters (`src/game/car_sounds.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8210CF40` | `EngineSound::EngineSound` | Overridden | 22 stores. |
+| `sub_8210CFB8` | `CarSound::CarSound` | Overridden | 122 stores. |
+| `sub_8210D760` | `EngineLayer::Start` | Overridden | 4 stores; calls `sub_8210D1D8`. |
+| `sub_8210E260` | `CarSound::Release` | Overridden | 1 stores; calls `sub_8210D670`, `sub_8258C940`. |
+| `sub_8210E308` | `CarSound::Stop` | Overridden | 1 stores; calls `sub_8210D670`. |
+| `sub_8210E3A8` | `CarSound::PauseAll` | Overridden | No stores; calls `sub_8210D590`. |
+| `sub_8210E440` | `CarSound::ResumeAll` | Overridden | No stores; calls `sub_8210D610`. |
+
+### `native_career`
+
+The career' set-ups, resets, small setters, copies and getters (`src/game/career.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82111598` | `PlayTime::Mark` | Overridden | 1 stores. |
+| `sub_821104A8` | `DayBlock::WinStreak` | Overridden | The halfword at +4828. |
+| `sub_821104B0` | `DayBlock::BestStreak` | Overridden | The halfword at +4830. |
+| `sub_821104C8` | `DayBlock::Word4832` | Overridden | The word at +4832. |
+| `sub_82110A80` | `Stats::WinStreak` | Overridden | The halfword at +5970. |
+
+### `native_collision` (tables)
+
+More of the collision (`src/game/collision.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820BEE70` | `BoxBox::FindImpact` | Overridden | No stores; calls `sub_820BE2C8`, `sub_820BEAD8`. |
+
+### `native_framework` (tables)
+
+More of the framework (`src/game/framework.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82090408` | `RunFrameworkAt` | Overridden | No stores; calls `sub_8209ACB8`. |
+| `sub_82090500` | `Framework::Framework` | Overridden | 46 stores. |
+| `sub_8209AAC0` | `RunLoop::RunLoop` | Overridden | 1 stores; calls `sub_8209A5F8`. |
+
+### `native_front_end_car_draw`
+
+The front end car draw' set-ups, resets, small setters, copies and getters (`src/game/front_end_car_draw.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820DEF48` | `Plates::Show` | Overridden | 2 stores. |
+| `sub_820DEF58` | `Plates::Hide` | Overridden | 2 stores. |
+
+### `native_game_modes` (tables)
+
+More of the game modes (`src/game/game_modes.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82106928` | `XPRHolder::XPRHolder` | Overridden | 12 stores. |
+| `sub_82106B78` | `Buffers28::~Buffers28` | Overridden | No stores; calls `sub_82150C90`. |
+| `sub_82106BC8` | `Member56896::Member56896` | Overridden | 21 stores; calls `sub_82106928`. |
+| `sub_82106C68` | `RaceModeMember::~RaceModeMember` | Overridden | 7 stores; calls `sub_82106B78`, `sub_8257CA60`. |
+| `sub_82107290` | `RaceModeMember::RaceModeMember` | Overridden | 91 stores; calls `sub_82106BC8`, `sub_82107230`, `sub_82153110`. |
+| `sub_82108280` | `MachineMember::MachineMember` | Overridden | 2 stores; calls `sub_82107230`. |
+| `sub_82150C90` | `Buffer28::~Buffer28` | Overridden | 1 stores; calls `sub_821506B8`. |
+| `sub_82150CA0` | `Buffer28::Reset` | Overridden | 4 stores; calls `sub_821506B8`. |
+| `sub_82153110` | `Member13360::Member13360` | Overridden | 69 stores; calls `sub_82150CA0`. |
+| `sub_82153D78` | `Member67760::Member67760` | Overridden | 62 stores. |
+
+### `native_input`
+
+The input' set-ups, resets, small setters, copies and getters (`src/game/input.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_825729F8` | `InputProcessor::InputProcessor` | Overridden | 1 stores; calls `sub_82577950`. |
+| `sub_82577368` | `LogicalPad::Values` | Overridden | No stores. |
+| `sub_82577370` | `LogicalPad::LogicalPad` | Overridden | 9 stores. |
+| `sub_825773E8` | `PhysicalPad::PhysicalPad` | Overridden | 8 stores. |
+| `sub_82577950` | `InputProcessorBase::InputProcessorBase` | Overridden | 16 stores. |
+| `sub_82582398` | `PhysicalPad::Values` | Overridden | No stores. |
+
+### `native_location_screen`
+
+The location screen' set-ups, resets, small setters, copies and getters (`src/game/location_screen.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_822254A0` | `LocationScreen::Reset` | Overridden | 6 stores; calls `sub_82225310`. |
+
+### `native_matrix_math`
+
+The matrix math' set-ups, resets, small setters, copies and getters (`src/game/matrix_math.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8209B158` | `SetWsToOne` | Overridden | 4 stores. |
+| `sub_820A9B80` | `ObjectInverse` | Overridden | No stores; calls `sub_820A9AD8`. |
+| `sub_82291120` | `Matrix::SetIdentity` | Overridden | No stores; calls `sub_82290FE0`. |
+| `sub_82291218` | `Matrix::FromQuaternionAndRow` | Overridden | 4 stores; calls `sub_82291130`. |
+| `sub_822913C8` | `Matrix::MultiplyReversed` | Overridden | No stores; calls `sub_82290FD8`. |
+| `sub_820AB640` | `Vec3::SwapXZ` | Overridden | No stores. |
+| `sub_82290FE0` | `Matrix::Set` | Overridden | A copy between its arguments, field by field. |
+
+### `native_mode_tick`
+
+The mode tick' set-ups, resets, small setters, copies and getters (`src/game/mode_tick.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8209CF08` | `ScreenFades::Init` | Overridden | 16 stores. |
+| `sub_8209F450` | `ActionMappers::SetBlocked` | Overridden | 4 stores. |
+
+### `native_model_animation`
+
+The model animation' set-ups, resets, small setters, copies and getters (`src/game/model_animation.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8257EEF0` | `Skeleton::Skeleton` | Overridden | 2 stores; calls `sub_8257F918`. |
+| `sub_82580088` | `SkeletonBase::~SkeletonBase` | Overridden | 1 stores; calls `sub_8257FA00`. |
+| `sub_825866D8` | `TrackSet::TrackSet` | Overridden | 5 stores. |
+| `sub_82586FC0` | `RecordClear` | Overridden | 3 stores. |
+| `sub_82587638` | `TrackSet::Clear` | Overridden | 4 stores. |
+| `sub_825877D8` | `SkeletonCursor::Clear` | Overridden | 5 stores. |
+
+### `native_models`
+
+The models' set-ups, resets, small setters, copies and getters (`src/game/models.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820A0A88` | `Shaders::LoadAll` | Overridden | 1 stores; calls `sub_820A09D8`. |
+| `sub_820CE6E8` | `PartModel::PartModel` | Overridden | 9 stores; calls `sub_8257A1C0`. |
+| `sub_820CE750` | `PartModel::~PartModel` | Overridden | 9 stores; calls `sub_8257A858`. |
+| `sub_820CE788` | `PartModel::Clear` | Overridden | 8 stores. |
+| `sub_820CE7B8` | `Model::SetVinylTextures` | Overridden | 2 stores. |
+| `sub_8256F240` | `SetSharedShaders` | Overridden | 2 stores. |
+| `sub_82574180` | `ScopedLock::ScopedLock` | Overridden | 1 stores; calls `sub_82574178`. |
+| `sub_825741B8` | `ScopedLock::~ScopedLock` | Overridden | No stores; calls `sub_8258C4A8`. |
+| `sub_8257A1C0` | `Model::Model` | Overridden | 7 stores; calls `sub_8257A150`, `sub_8257EEF0`, `sub_825866D8`. |
+| `sub_8257A858` | `Model::~Model` | Overridden | 1 stores; calls `sub_82579948`, `sub_8257A270`, `sub_8257CA60`, `sub_8257F180`, `sub_82587120`, `sub_825872B8`. |
+| `sub_8257C780` | `XPR::XPR` | Overridden | 6 stores. |
+| `sub_8257CA60` | `XPR::~XPR` | Overridden | No stores; calls `sub_8257C9C0`. |
+
+### `native_post_effects`
+
+The post effects' set-ups, resets, small setters, copies and getters (`src/game/post_effect_objects.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8212DAC8` | `GlareDef::GlareDef` | Overridden | 20 stores. |
+| `sub_82133C80` | `ColorFilter::~ColorFilter` | Overridden | 1 stores; calls `sub_82131EB0`. |
+| `sub_82134E68` | `MotionBlur::~MotionBlur` | Overridden | 1 stores; calls `sub_82131EB0`, `sub_82132738`. |
+| `sub_82135908` | `Glow::~Glow` | Overridden | 1 stores; calls `sub_82131EB0`, `sub_82132738`. |
+
+### `native_race_event`
+
+The race event' set-ups, resets, small setters, copies and getters (`src/game/race_event.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_821418A8` | `RaceEvent::RaceEvent` | Overridden | 21 stores. |
+
+### `native_race_loading`
+
+The race loading' set-ups, resets, small setters, copies and getters (`src/game/race_loading.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8214F450` | `CourseSetup::OnCourseReady` | Overridden | 1 stores. |
+| `sub_8214F460` | `CourseSetup::Begin` | Overridden | 6 stores. |
+
+### `native_race_overlays`
+
+The race overlays' objects (`src/game/race_overlays.cpp`, types in `src/game/race_overlays.h`): their constructors, resets and destructors, the small setters, and the overlay views' getters. The overlays' updates and recordings stay recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8211EBB0` | `LightSprite::Reset` | Overridden | Its sprite state reset (points to (0, 0, 0, 1), flags 0, 0, 0, 1), +116 = 4, the point at +272 to (0, 0, 0, 1). |
+| `sub_8211F220` | `LightSprite::LightSprite` | Overridden | `Overlay::Overlay`, vtable `0x820083D4`, w = 1 on its points. |
+| `sub_8211F5F0` | `ModelSprite::Reset` | Overridden | Its sprite state (at +224) reset, then +336 = 9, +340 = 4, +344 = 9, +348 = 12, +352 = 0, +404 and +408 = -1, twelve points to (0, 0, 0, 1). |
+| `sub_82122A40` | `ModelSprite::ModelSprite` | Overridden | `Overlay::Overlay`, vtable `0x82008478`, w = 1 on its points. |
+| `sub_82123480` | `Overlay::SetTextures104` | Overridden | +104 = r4. |
+| `sub_82125F38` | `CarOverlays::ClearViews` | Overridden | The 25 views at +4 = 0. |
+| `sub_82126068` | `Overlay::Overlay` | Overridden | The base vtable `0x82008568`; the destructors call it to put it back. |
+| `sub_82126278` | `ViewDesc::Clear` | Overridden | +0 and +4 = 0. |
+| `sub_82126288` | `OverlayView::OverlayView` | Overridden | Vtable `0x82000A40`, +4 and +8 = 0. |
+| `sub_82126478` | `OverlayView::WheelSlip` | Overridden | `sub_820BFFB8` on +4. |
+| `sub_82126480` | `OverlayView::HasPoint` | Overridden | `sub_820D9A78` on +8. |
+| `sub_8212ACC0` | `SmokeEmitter::SmokeEmitter` | Overridden | w = 1 on its ten points and its ten particles' points (720 bytes; particles at +240). |
+| `sub_8212AD18` | `Smoke::~Smoke` | Overridden | Vtable `0x8200868C`, each of the 45 emitters' particles destroyed (`sub_820900C0`, last first), then `Overlay::Overlay`. |
+| `sub_8212AE38` | `Particle::Particle` | Overridden | w = 1 on its two points (48 bytes). |
+| `sub_8212B9F0` | `ParticlesB::~ParticlesB` | Overridden | Vtable `0x820086B8`, each of the 15 slots' particle destroyed (last first), then `Overlay::Overlay`. |
+| `sub_8212BB98` | `Marker::Reset` | Overridden | Its sprite state (at +128) reset, the camera position (+272) to (0, 0, 0, 1), +288 = 1. |
+| `sub_8212C580` | `Marker::Marker` | Overridden | `Overlay::Overlay`, vtable `0x820086EC`, w = 1 on its points. |
+| `sub_8212D6F8` | `Sparks::Sparks` | Overridden | `Overlay::Overlay`, vtable `0x82008724`, w = 1 on the 200 sparks' points (144 bytes each from +128) and the 32 points after. |
+| `sub_8215BDE0` | `RaceOverlays::Clear` | Overridden | The 25 overlays at r3 unset. |
+| `sub_821262A8` | `OverlayView::Set` | Overridden | +4..+12 = the three words at r4. |
+| `sub_82129438` | `Trail::SetLastPosition` | Overridden | +64144 = the point at r4. |
+| `sub_8212A2D0` | `Smoke::SetVelocity` | Overridden | +32544 = the vector at r4. |
+| `sub_8212B4D8` | `ParticlesB::SetPosition` | Overridden | +2784 = the point at r4. |
+| `sub_8212BD78` | `Marker::SetCameraPosition` | Overridden | +272 = the point at r4. |
+| `sub_8212CDC0` | `Sparks::SetPosition` | Overridden | +28944 = the point at r4. |
+
+### `native_race_setup`
+
+The race set-up's records (`src/game/race_setup.cpp`, types in `src/game/race_setup.h`): the racers' car records cleared, the racers' and the race data's entries reset, the stages and course record reset. The race set-up itself stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820CC248` | `Car::ResetDecals40` | Overridden | The 40 decals at r3 (car +288; 32 bytes each): scale 1, 1, image -1, the rest 0. |
+| `sub_820CC998` | `Car::ResetDecals6` | Overridden | The same for the 6 decals at r3 (car +96). |
+| `sub_820CCA18` | `Car::Reset1568` | Overridden | The car's options (+1568): bytes 0, 0, 5, 0, 0, 0, 1, 2, 1, 2, 0 and +12 = 0. |
+| `sub_820CD368` | `Car::SetupVehicle` | Overridden | `Vehicle::SetupFromCar` (`sub_820C2608`) with r3 and r4 swapped. |
+| `sub_820CD378` | `Car::Init` | Overridden | `Car::Clear`, then +3888 = 0, +3892 = 1. |
+| `sub_820CD500` | `Car::ResetSettings` | Overridden | The car's settings (+16): nine halves at +0 = 0, bytes +56..+78 = 2, 2, 2, 2, 3, 7, fifteen 0s, 10, 0. |
+| `sub_820CD590` | `Car::Clear` | Overridden | Its header cleared (+4 = -1), `sub_820CD3B8` on +1644 (r4 = 0), the settings, decals and options reset, the three slots at +1584 cleared. |
+| `sub_820FF6A8` | `CourseBlock::Clear` | Overridden | 76 bytes: memset of 64, then +60..+72 = 0. |
+| `sub_820FF958` | `RacerRecord::Init` | Overridden | `Car::Init`, then +3904, +3906 (halves), +3912, +3916 = -1, +3920 = 0.0, +3924 = 0. |
+| `sub_820FFAC8` | `Racers::Reset` | Overridden | The 4 words after the 113 records (3936 bytes each) = 0, then each `RacerRecord::Init`. |
+| `sub_821019B0` | `Stages::Reset` | Overridden | Memset of 1224; each of the 10 stages (80 bytes): +0 = 4, four (-1, 2) pairs at +44; then `CourseRecord::Reset` on +812. |
+| `sub_82101EA8` | `RaceEntryPart::RaceEntryPart` | Overridden | A race entry's part (972 bytes): +792 = 0.0, +796 = 0. |
+| `sub_821020F0` | `RaceEntry::Reset` | Overridden | A race entry (3936 bytes): +3908 = 1, the rest of its header 0; each of its 4 parts `sub_82102038` then +784, +788 = 12000; `sub_82101B18` on +3892. |
+| `sub_82102158` | `RaceEntries::Reset` | Overridden | Memset of 381800, then each of the 97 entries' `RaceEntry::Reset`. |
+| `sub_82102330` | `RaceData::ResetGlobal` | Overridden | `sub_82102278` on the race data ([0x826B580C], read live). |
+| `sub_82102340` | `RaceData::RaceData` | Overridden | The 97 entries' (at +446056) parts made with `RaceEntryPart::RaceEntryPart` (vector constructor iterator). |
+| `sub_82105E20` | `CourseRecord::Reset` | Overridden | `CourseBlock::Clear` on +332; the ten slots a free list (index i, next i + 1, the last -1); +40, +48 = 0, +42, +44, +46 = -1. |
+
+### `native_race_world`
+
+The race world' set-ups, resets, small setters, copies and getters (`src/game/race_world.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82141F90` | `RoutePosition::ToMainRoad` | Overridden | No stores; calls `sub_820FA608`. |
+| `sub_821433C0` | `RaceEvent::PlaceStartsCurrent` | Overridden | No stores; calls `sub_82143120`. |
+| `sub_8216E408` | `RaceWorld::OnPausedTick` | Overridden | No stores. |
+| `sub_8216E930` | `SortedList::Clear` | Overridden | 3 stores. |
+
+### `native_racer_controllers`
+
+The racer controllers' set-ups, resets, small setters, copies and getters (`src/game/racer_controllers.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82102488` | `CarInputs::Destroy` | Overridden | No stores; calls `sub_8258C868`. |
+| `sub_8215D538` | `RaceFlow::OnEnd` | Overridden | No stores; calls `sub_82102488`. |
+| `sub_8215DAE0` | `RaceFlow::OnHold` | Overridden | No stores; calls `sub_8215D960`. |
+| `sub_8215E808` | `RaceFlow::OnState7` | Overridden | No stores; calls `sub_8215E598`. |
+
+### `native_scene_target`
+
+The scene target' set-ups, resets, small setters, copies and getters (`src/game/scene_target.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8209B178` | `SceneTarget::RecordBoundTargets` | Overridden | No stores; calls `sub_8209AF68`. |
+
+### `native_scenery_lists`
+
+The scenery lists' set-ups, resets, small setters, copies and getters (`src/game/scenery_lists.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82145338` | `SceneryModel::ResetDrawState` | Overridden | 3 stores. |
+| `sub_82146DD0` | `ModelList::LoadPoints` | Overridden | 24 stores; calls `sub_82146CD0`. |
+| `sub_82146EF8` | `PassDescription::SetBillboardPass` | Overridden | 2 stores. |
+| `sub_8256F6D8` | `SceneLights::RecordProjectors` | Overridden | 92 stores. |
+
+### `native_sound_cues`
+
+The sound cues' set-ups, resets, small setters, copies and getters (`src/game/sound_cues.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82105B48` | `SoundBankHolder::SoundBankHolder` | Overridden | 3 stores. |
+| `sub_82117558` | `Sound::Start` | Overridden | 1 stores. |
+| `sub_821178C8` | `BankPair::Release` | Overridden | 1 stores. |
+| `sub_82118010` | `AudioManager::GetEngine` | Overridden | No stores. |
+| `sub_825820C8` | `Emitter::Emitter` | Overridden | 59 stores. |
+| `sub_82582B00` | `WaveBankHolder::WaveBankHolder` | Overridden | 4 stores. |
+| `sub_82582B60` | `Listener::Listener` | Overridden | 14 stores. |
+| `sub_821178D8` | `BankPair::SoundBank` | Overridden | The word at +76. |
+| `sub_821176D0` | `Sound::Set3D` | Overridden | A copy between its arguments, field by field. |
+| `sub_82117F70` | `AudioManager::SetListenerPosition` | Overridden | A copy between its arguments, field by field. |
+| `sub_82117F78` | `AudioManager::SetListenerOrientation` | Overridden | A copy between its arguments, field by field. |
+| `sub_82117F80` | `AudioManager::SetListenerVelocity` | Overridden | A copy between its arguments, field by field. |
+
+### `native_stand_models`
+
+The stand models' set-ups, resets, small setters, copies and getters (`src/game/stand_models.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820D8BE0` | `Wheels::SetTireTextures` | Overridden | No stores; calls `sub_820D1420`. |
+| `sub_820E7058` | `SceneWheels::SetTireGrades` | Overridden | 2 stores; calls `sub_820D8B88`, `sub_820D8BE0`. |
+| `sub_820DEF68` | `SceneParts::LightValue` | Overridden | The float (f1) at +27664. |
+
+### `native_strings_and_font` (tables)
+
+More of the strings and font (`src/game/strings_and_font.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_8210A888` | `Text::Draw` | Overridden | No stores; calls `sub_8210A530`. |
+| `sub_8210AF20` | `Text::Load` | Overridden | No stores; calls `sub_821095B8`, `sub_8210AA00`. |
+
+### `native_track_collision`
+
+The track collision' set-ups, resets, small setters, copies and getters (`src/game/track_collision.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_820F84E0` | `TrackRoute::Prepare` | Overridden | 2 stores. |
+| `sub_820F84F8` | `TrackRoute::Free` | Overridden | 1 stores; calls `sub_82292D70`. |
+| `sub_820FF100` | `TrackCollision::Unload` | Overridden | No stores; calls `sub_820B8550`, `sub_820F6820`, `sub_820F84F8`, `sub_8258C868`. |
+
+### `native_track_zones` (tables)
+
+More of the track zones (`src/game/track_zones.cpp`): set-ups, resets, small setters, copies and getters, generated from SBX's code and checked against the recompiled functions.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_822889F0` | `TrackZones::TrackZones` | Overridden | 70 stores. |
+
+### `native_tuning_pages`
+
+The tuning pages' set-ups, resets, small setters, copies and getters (`src/game/tuning_pages.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_821F50F8` | `DecalImages::RestoreStickerMovie` | Overridden | No stores; calls `sub_82205FA0`. |
+| `sub_821FC6A0` | `TuningScreen::SetUpVinylBusyIcon` | Overridden | 5 stores. |
+| `sub_82205FA0` | `DecalImages::RestoreMovieTexture` | Overridden | No stores; calls `sub_821F6CD8`, `sub_82202780`. |
+
+### `native_tuning_screen`
+
+The tuning screen' set-ups, resets, small setters, copies and getters (`src/game/tuning_screen.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_821FC1C0` | `TuningScreen::DebugLayerSet` | Overridden | No stores. |
+| `sub_821FC240` | `TuningScreen::DebugEditPosition` | Overridden | No stores. |
+| `sub_821FC2B8` | `TuningScreen::DebugEditView` | Overridden | No stores. |
+
+### `native_type67_modes`
+
+The type67 modes' set-ups, resets, small setters, copies and getters (`src/game/type67_modes.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82178328` | `GarageStage::ResetPose` | Overridden | 14 stores. |
+| `sub_82179E58` | `CameraPreset::CameraPreset` | Overridden | 15 stores. |
+| `sub_8217E808` | `GarageCamera::Init` | Overridden | 3 stores; calls `sub_8217B770`, `sub_8217E1C0`. |
+| `sub_82184340` | `Dialog::OpenMovies` | Overridden | No stores; calls `sub_8211E9C8`. |
+| `sub_821B9708` | `ControllerOptions::OnLeft` | Overridden | 2 stores; calls `sub_82292D70`. |
+| `sub_821BABA8` | `ControllerOptions::Open` | Overridden | 1 stores. |
+| `sub_8222FA58` | `Type6Dialog::Shown` | Overridden | 1 stores. |
+| `sub_82231C80` | `Type6Screen0::OnLeft` | Overridden | 3 stores; calls `sub_82292D70`. |
+| `sub_8223DDA8` | `PanelScreen::InitWords` | Overridden | 2 stores. |
+| `sub_8223F558` | `Type7Dialog::Shown` | Overridden | 1 stores. |
+| `sub_82241948` | `Type7Screen0::OnLeft` | Overridden | 3 stores; calls `sub_82292D70`. |
+| `sub_82274630` | `ScreenMachine::Wait` | Overridden | 1 stores. |
+
+### `native_vehicle_accessors`
+
+The vehicle accessors' set-ups, resets, small setters, copies and getters (`src/game/vehicle_accessors.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82098DE8` | `RigidBody::Force` | Overridden | No stores. |
+| `sub_820B65A0` | `Contact::Position` | Overridden | No stores. |
+| `sub_820B6710` | `RigidBody::Field80` | Overridden | No stores. |
+| `sub_820B6718` | `RigidBody::Velocity` | Overridden | No stores. |
+| `sub_820B6720` | `RigidBody::Field144` | Overridden | No stores. |
+| `sub_820B6728` | `RigidBody::Field160` | Overridden | No stores. |
+| `sub_820B67C8` | `RigidBody::Orientation` | Overridden | No stores. |
+| `sub_820B67D0` | `RigidBody::Matrix` | Overridden | No stores. |
+| `sub_820B67E8` | `RigidBody::AngularVelocity` | Overridden | No stores. |
+| `sub_820B67F8` | `RigidBody::AddForce` | Overridden | No stores; calls `sub_82291DF8`. |
+| `sub_820B6800` | `RigidBody::AddTorque` | Overridden | No stores; calls `sub_82291DF8`. |
+| `sub_820B7B60` | `CollisionObject::SetWord264` | Overridden | 1 stores. |
+| `sub_820B8600` | `Collision::SetGlobal78` | Overridden | 1 stores. |
+| `sub_820B8610` | `Collision::SetGlobal7C` | Overridden | 1 stores. |
+| `sub_820BFFA0` | `Vehicle::Identity` | Overridden | No stores. |
+| `sub_820FFC00` | `Stages::SetWord808` | Overridden | 1 stores. |
+| `sub_82249148` | `RigidBody::Position` | Overridden | No stores. |
+| `sub_8236FD40` | `RigidBody::Torque` | Overridden | No stores. |
+| `sub_82432A68` | `DebugSwitchOn` | Overridden | No stores. |
+| `sub_82433058` | `DebugSwitchOff` | Overridden | No stores. |
+| `sub_82579560` | `List::Init` | Overridden | 2 stores. |
+| `sub_820B64D0` | `RigidBody::IsFixed` | Overridden | The byte at +0. |
+| `sub_820B7B58` | `CollisionObject::Word264` | Overridden | The word at +264. |
+| `sub_820B8B98` | `Contact::Strength` | Overridden | The float (f1) at +64. |
+| `sub_820B94F0` | `Object344::Float28` | Overridden | The float (f1) at +28. |
+| `sub_820BFF78` | `Vehicle::Float2224` | Overridden | The float (f1) at +2224. |
+| `sub_820BFF80` | `Vehicle::Speed` | Overridden | The float (f1) at +48. |
+| `sub_820FFDB8` | `Stages::Word808` | Overridden | The word at +808. |
+| `sub_825741C0` | `RigidBody::Mass` | Overridden | The float (f1) at +4. |
+| `sub_820B7C08` | `CollisionObject::SetSize` | Overridden | A copy between its arguments, field by field. |
+| `sub_820B7C10` | `CollisionRecord::Copy` | Overridden | A copy between its arguments, field by field. |
+| `sub_820FFFE8` | `Pair::Copy` | Overridden | A copy between its arguments, field by field. |
+| `sub_82291B20` | `Vec4::Copy` | Overridden | A copy between its arguments, field by field. |
+
+### `native_xact`
+
+The xact' set-ups, resets, small setters, copies and getters (`src/game/xact.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82587918` | `XACTWaveEntry::XACTWaveEntry` | Overridden | 1 stores. |
+| `sub_825A74F0` | `XACTVariable::XACTVariable` | Overridden | 47 stores. |
+| `sub_825A75F0` | `XACTGlobalSettings::XACTGlobalSettings` | Overridden | 16 stores. |
+| `sub_825A83A8` | `XACTNodePool::XACTNodePool` | Overridden | 38 stores. |
+| `sub_825A88C0` | `XACTGlobalSettingsBase::XACTGlobalSettingsBase` | Overridden | 11 stores. |
+| `sub_825AA498` | `XACTCue::DetachSound` | Overridden | 2 stores. |
+| `sub_825AB208` | `XACTCue::MakeInstanceVariable` | Overridden | No stores; calls `sub_825AB0F8`. |
+| `sub_825AC9E8` | `XACTSoundBankBase::XACTSoundBankBase` | Overridden | 50 stores. |
+| `sub_825ACBA0` | `XACTSoundBank::AddListener` | Overridden | No stores; calls `sub_825AEA28`. |
+| `sub_825ACD00` | `XACTSoundBank::XACTSoundBank` | Overridden | 8 stores; calls `sub_825AC9E8`. |
+| `sub_825AD9B8` | `XACTWaveBank::AddListener` | Overridden | No stores; calls `sub_825AEA28`. |
+| `sub_825B16D8` | `XACTFader::XACTFader` | Overridden | 6 stores. |
+| `sub_825B1708` | `XACTFader::~XACTFader` | Overridden | 1 stores. |
+| `sub_825B2478` | `XACTWaveBankRoot::XACTWaveBankRoot` | Overridden | 51 stores. |
+| `sub_825B4318` | `XACTWaveBankBase::XACTWaveBankBase` | Overridden | 3 stores; calls `sub_825B2478`. |
+| `sub_825B5E98` | `XACTEvent::~XACTEvent` | Overridden | 1 stores. |
+| `sub_825B8E70` | `XACTInMemoryWave::XACTInMemoryWave` | Overridden | 12 stores; calls `sub_825B7A80`. |
+| `sub_825BAC80` | `XACTTrackInstance::XACTTrackInstance` | Overridden | 17 stores. |
+| `sub_8209A2C8` | `XACTWaveEntry::GetPlayLength` | Overridden | The word at +24. |
+| `sub_820A88D0` | `XACTWaveEntry::GetLoopStart` | Overridden | The word at +28. |
+| `sub_82370758` | `XACTWaveEntry::GetLoopLength` | Overridden | The word at +32. |
+| `sub_8242B820` | `MenuList::GetPreviousSelection` | Overridden | The word at +20. |
+| `sub_825BD8F8` | `XACTPlayWaveEvent::GetLoopCount` | Overridden | The byte at +52. |
+
+### `native_xaudio`
+
+The xaudio' set-ups, resets, small setters, copies and getters (`src/game/xaudio.cpp`), generated from SBX's code and checked against the recompiled functions. The rest of the subsystem stays recompiled.
+
+| Address | Name | Status | Notes |
+|---|---|---|---|
+| `sub_82447AF0` | `XAudioSourceVoice::DeletingDestructor` | Overridden | No stores; calls `sub_82447508`. |
+| `sub_82447F90` | `XAudio::Alloc` | Overridden | No stores; calls `sub_82295118`. |
+| `sub_82447FA0` | `XAudio::Free` | Overridden | No stores; calls `sub_822951B0`. |
+| `sub_824483B0` | `XAudioSubmixVoice::DeletingDestructor` | Overridden | No stores; calls `sub_82448118`. |
+| `sub_82448AB0` | `XAudioVoice::SetRootVtable` | Overridden | 1 stores. |
+| `sub_82448B90` | `XAudio::MixerCallback` | Overridden | No stores; calls `sub_82444FB8`. |
+| `sub_82449498` | `XAudioDefaultAllocator::~XAudioDefaultAllocator` | Overridden | 3 stores; calls `sub_824492B8`. |
+| `sub_8244DCE0` | `XAudioMatrix::Destruct` | Overridden | 3 stores. |
+| `sub_8244E760` | `XAudioCodec::Destruct` | Overridden | 2 stores; calls `sub_824529C0`. |
+| `sub_8244EDC0` | `XAudioVoice::ConstructOutputs` | Overridden | 1 stores; calls `sub_8244FB88`. |
+| `sub_82450598` | `ReverbCore::Defaults` | Overridden | 19 stores. |
+| `sub_82450A58` | `ReverbCore::SetStereo` | Overridden | 1 stores. |
+| `sub_82452980` | `CodecBase::CodecBase` | Overridden | 7 stores. |
+| `sub_824529C0` | `CodecBase::~CodecBase` | Overridden | 1 stores; calls `sub_824565E8`. |
+| `sub_824529D8` | `CodecBase::Init` | Overridden | 6 stores; calls `sub_82456620`, `sub_8258CB90`. |
+| `sub_824554E8` | `PcmCodec::~PcmCodec` | Overridden | 3 stores; calls `sub_8244E760`. |
+| `sub_824565E8` | `PacketLists::Clear` | Overridden | No stores; calls `sub_824448F0`. |
+| `sub_824566E0` | `PacketLists::Init` | Overridden | 6 stores. |
+| `sub_8244F7C8` | `XAudioVoice::SetFormatWords` | Overridden | A copy between its arguments, field by field. |
 
 ## Render commands
 

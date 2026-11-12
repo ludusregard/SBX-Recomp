@@ -15,6 +15,8 @@ Read the relevant doc before making changes; update it as you learn.
   address worked out, and a row for every override (run
   `sbx_recomp/tools/check_function_statuses.py` after adding or removing
   one).
+- `docs/native-code-rules.md`: rules for writing new code for the project,
+  check before writing any game related code whether hook or native.
 - `docs/native-code.md`: the game's subsystems rewritten as our C++, one
   `--native_<name>` flag each. Check before writing native code; add each
   subsystem's row and test notes.
@@ -57,37 +59,30 @@ Read the relevant doc before making changes; update it as you learn.
 ALWAYS check ITC-Recomp for changes since "Last reviewed" in
 `docs/porting-from-itc.md`:
 
-1. Fetch and fast-forward the checkout if it's behind.
-2. Read `git log` since that commit, and the diffs of its `CLAUDE.md` and
-   `docs/*.md`.
-3. Report new or renamed functions, new fixes or features, and changed
-   conventions, each with its commit.
-4. For each new function or fix, ask whether to port it (SBX address via
-   `itc_to_sbx_functions.tsv` / `port_addrs.py`).
-5. Update "Last reviewed" to the new commit.
+1. Check the current local ITC-Recomp checkout. Do not fetch, pull, or otherwise update it.
+2. If the checkout appears to be behind, inform the user and let them update it manually.
+3. Inspect the commit history since `Last reviewed`, including changes to `CLAUDE.md` and `docs/*.md`.
+4. Report new or renamed functions, fixes, features, and changed conventions, identifying their respective commits.
+5. For each new function or fix, ask whether the user wants it ported. Use `itc_to_sbx_functions.tsv` and `port_addrs.py` to identify corresponding SBX addresses.
+6. Update `Last reviewed` after the changes have been reviewed.
 
-## Rules
+# Development rules
 
-- **NEVER edit or commit in the ITC-Recomp checkout.** Fetching and
-  fast-forwarding it is the only exception.
-- **NEVER port anything from ITC-Recomp without the user's approval.**
-- **NEVER put machine-specific paths** (drives, user folders, the
-  ITC-Recomp location) in code, docs or config. Paths are relative to
-  the repo.
-- **NEVER revert or `git checkout` uncommitted work** without committing
-  it first. Commit often.
-- **ALWAYS check `git diff` before committing** a doc another session may
-  have edited.
-- **ASK before** creating a branch, pushing to `main` or pushing tags.
-  Otherwise stay on the current branch.
-- **ASK before** starting background agents or scheduled runs.
-- **Find problems with logs, not guesses:** add logging, have the user run
-  the game, read the log, fix what it shows.
-- Only search inside this repo; ask for the location of anything outside it.
-- Docs and comments describe SBX on its own terms; name ITC-Recomp only
-  where the origin matters.
-- Follow ITC-Recomp's layout, naming and doc conventions unless a doc
-  here says otherwise.
-- American English (color, gray), plain and short, in code, comments,
-  docs and commit messages.
-- No `-march=native`.
+- **Native game code:** Before writing or modifying anything in `src/game/`, read `docs/native-code.md` and `docs/native-code-rules.md` following their requirements.
+- **ITC-Recomp:** Never edit or commit anything in the ITC-Recomp checkout. Never port functionality without the user's explicit approval.
+- **Repository operations:** Git operations are performed manually by the user. Do not fetch, pull, checkout, reset, stash, commit, push, create branches, or modify Git history. Read-only inspection is permitted when necessary.
+- **File operations:** Never delete files or directories. Ask the user to handle deletions manually. Do not use commands or scripts that implicitly remove or overwrite existing files.
+- **Uncommitted work:** Never revert, discard, or overwrite existing user changes.
+- **External files:** Only search inside this repository. Ask the user for the location of anything outside it.
+- **Machine-specific paths:** Never put drive letters, user folders, or machine-specific ITC-Recomp locations in code, documentation, or configuration. Use repository-relative paths.
+- **Logging:** Find problems using logs, not guesses. Add appropriate logging, have the user run the game, inspect the resulting logs, and fix what they show.
+- **Agents and automation:** Ask before starting background agents or scheduled tasks.
+- **Git branches and releases:** Ask before creating branches, pushing to `main`, or pushing tags. All Git operations remain user-controlled.
+
+# Project conventions
+
+- Follow ITC-Recomp's layout, naming, and documentation conventions unless an SBX document specifies otherwise.
+- Documentation and comments describe SBX on its own terms. Reference ITC-Recomp only when the origin of something matters.
+- Use American English (color, gray).
+- Keep code, comments, documentation, and commit messages plain, concise, and readable.
+- Never use `-march=native`.

@@ -13,4 +13,9 @@ namespace subtick {
 // logic pass.
 void PerFrameLogic_RecordRaceOverlays(PPCContext& ctx, uint8_t* base);
 
+// Main thread, on a render-only pass in the menus, in the
+// place of the messages it doesn't deliver: the UI movie updates the last
+// logic pass's messages made are drawn again, from the state each had then.
+void PerFrameLogic_RedrawMenuUiMovies(PPCContext& ctx, uint8_t* base);
+
 }  // namespace subtick

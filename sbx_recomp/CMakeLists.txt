@@ -95,55 +95,94 @@ set(SBX_SOURCES
     src/audio/native_audio.cpp
     src/audio/output_mix.cpp
     src/debug/frame_state_diff.cpp
-    src/hooks/accessories.cpp
+    src/game/accessories.cpp
+    src/game/action_mappers.cpp
+    src/game/ai_drivers.cpp
+    src/game/app_start_up.cpp
+    src/game/app_states.cpp
+    src/game/archive.cpp
     src/hooks/autosave.cpp
-    src/hooks/car_makers.cpp
-    src/hooks/car_physics.cpp
-    src/hooks/car_specs.cpp
-    src/hooks/collision.cpp
-    src/hooks/course_scenery.cpp
+    src/game/boot_mode.cpp
+    src/game/c_runtime.cpp
+    src/game/camera_modes.cpp
+    src/game/cameras.cpp
+    src/game/car_makers.cpp
+    src/game/car_models.cpp
+    src/game/car_physics.cpp
+    src/game/car_sounds.cpp
+    src/game/car_specs.cpp
+    src/game/career.cpp
+    src/game/collision.cpp
+    src/game/course_scenery.cpp
     src/hooks/create_file.cpp
     src/hooks/custom_music.cpp
     src/hooks/cut_car_wheels.cpp
-    src/hooks/data_file.cpp
-    src/hooks/data_load.cpp
-    src/hooks/data_tables.cpp
-    src/hooks/file_layer.cpp
+    src/game/data_file.cpp
+    src/game/data_load.cpp
+    src/game/data_tables.cpp
+    src/game/file_layer.cpp
     src/hooks/font.cpp
-    src/hooks/framework.cpp
-    src/hooks/game_modes.cpp
-    src/hooks/lights.cpp
-    src/hooks/load_poll.cpp
-    src/hooks/material_passes.cpp
-    src/hooks/menu_helpers.cpp
-    src/hooks/menu_sounds.cpp
+    src/game/framework.cpp
+    src/game/front_end_car_draw.cpp
+    src/game/game_modes.cpp
+    src/game/input.cpp
+    src/game/lights.cpp
+    src/game/load_poll.cpp
+    src/game/location_screen.cpp
+    src/game/material_passes.cpp
+    src/game/matrix_math.cpp
+    src/game/menu_helpers.cpp
+    src/game/menu_sounds.cpp
+    src/game/mode_tick.cpp
+    src/game/model_animation.cpp
+    src/game/models.cpp
     src/hooks/patch_loader.cpp
     src/hooks/post_effects.cpp
     src/hooks/post_race.cpp
-    src/hooks/race_hud.cpp
-    src/hooks/race_hud_object.cpp
-    src/hooks/race_scene.cpp
-    src/hooks/race_screens.cpp
-    src/hooks/race_sounds.cpp
-    src/hooks/race_states.cpp
-    src/hooks/replay_snapshots.cpp
-    src/hooks/save_data.cpp
-    src/hooks/save_interface.cpp
-    src/hooks/scene.cpp
-    src/hooks/scene_loaders.cpp
-    src/hooks/scene_models.cpp
-    src/hooks/screen_constructors.cpp
-    src/hooks/screen_objects.cpp
-    src/hooks/second_set.cpp
-    src/hooks/shader_objects.cpp
-    src/hooks/strings_and_font.cpp
-    src/hooks/texture_compression.cpp
+    src/game/post_effect_objects.cpp
+    src/game/race_event.cpp
+    src/game/race_hud.cpp
+    src/game/race_hud_object.cpp
+    src/game/race_loading.cpp
+    src/game/race_overlays.cpp
+    src/game/race_scene.cpp
+    src/game/race_screens.cpp
+    src/game/race_setup.cpp
+    src/game/race_sounds.cpp
+    src/game/race_states.cpp
+    src/game/race_world.cpp
+    src/game/racer_controllers.cpp
+    src/game/replay_snapshots.cpp
+    src/game/save_data.cpp
+    src/game/save_interface.cpp
+    src/game/scene.cpp
+    src/game/scene_loaders.cpp
+    src/game/scene_models.cpp
+    src/game/scene_target.cpp
+    src/game/scenery_lists.cpp
+    src/game/screen_constructors.cpp
+    src/game/screen_objects.cpp
+    src/game/second_set.cpp
+    src/game/shader_objects.cpp
+    src/game/sound_cues.cpp
+    src/game/stand_models.cpp
+    src/game/std_list.cpp
+    src/game/std_string.cpp
+    src/game/strings_and_font.cpp
+    src/game/texture_compression.cpp
     src/hooks/title_screen.cpp
-    src/hooks/track_zones.cpp
-    src/hooks/ui_movies.cpp
+    src/game/track_collision.cpp
+    src/game/track_zones.cpp
+    src/game/tuning_pages.cpp
+    src/game/tuning_screen.cpp
+    src/game/type67_modes.cpp
+    src/game/ui_movies.cpp
     src/hooks/unlock_cut_cars.cpp
-    src/hooks/vehicle.cpp
+    src/game/vehicle.cpp
+    src/game/vehicle_accessors.cpp
     src/hooks/voice.cpp
+    src/game/xact.cpp
+    src/game/xaudio.cpp
     src/hooks/xma.cpp
     src/subtick/car_transforms.cpp
     src/subtick/frame_pacer.cpp

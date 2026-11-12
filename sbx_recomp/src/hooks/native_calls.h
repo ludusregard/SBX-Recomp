@@ -25,4 +25,17 @@ void NativeRaceHud_RivalLogoDraw(PPCContext& ctx, uint8_t* base);
 // subtick/per_frame_logic.cpp's override.
 void NativeCourseScenery_AdvanceTextureAnimations(PPCContext& ctx, uint8_t* base);
 
+// SaveData::NewGame (sub_82113FB0; --native_save_data), from
+// unlock_cut_cars.cpp's override.
+void NativeSaveData_NewGame(PPCContext& ctx, uint8_t* base);
+
+// SaveGame::Write (sub_8228CEE8; --native_save_interface), from
+// autosave.cpp's override.
+void NativeSaveInterface_Write(PPCContext& ctx, uint8_t* base);
+
+// UiMovie::Update (sub_8211D4B8) and UiMovie::ApplyTrack (sub_82585C40;
+// --native_ui_movies), from subtick/per_frame_logic.cpp's overrides.
+void NativeUiMovies_Update(PPCContext& ctx, uint8_t* base);
+void NativeUiMovies_ApplyTrack(PPCContext& ctx, uint8_t* base);
+
 }  // namespace hooks

@@ -1,0 +1,229 @@
+struct RigidBody {
+  uint8_t fixed;  // Doesn't move (walls, the track).
+  uint8_t unknown_1[3];
+  f32_be mass;
+  uint8_t unknown_8[8];
+  Vector unknown_16;
+  Vector velocity;
+  f32_be unknown_48;
+  uint8_t unknown_52[12];
+  Vector force;  // Summed over a step.
+  Vector rotation;  // A quaternion.
+  Vector angular_velocity;
+  uint8_t unknown_112[16];
+  Vector torque;  // Summed over a step.
+  Vector unknown_144;
+  Vector unknown_160;
+  Vector momentum;  // The velocity times the mass.
+  Vector unknown_192;
+  Vector position;
+  Matrix orientation;
+  Matrix transform;
+  Vector inertia;
+  Vector inverse_inertia;
+  uint8_t unknown_384[16];
+  Vector unknown_400;
+  uint8_t unknown_416[64];
+  Vector unknown_480;
+  Vector unknown_496;
+};
+GUEST_SIZE(RigidBody, 512);
+GUEST_OFFSET(RigidBody, fixed, 0);
+GUEST_OFFSET(RigidBody, mass, 4);
+GUEST_OFFSET(RigidBody, velocity, 32);
+GUEST_OFFSET(RigidBody, force, 64);
+GUEST_OFFSET(RigidBody, rotation, 80);
+GUEST_OFFSET(RigidBody, angular_velocity, 96);
+GUEST_OFFSET(RigidBody, torque, 128);
+GUEST_OFFSET(RigidBody, momentum, 176);
+GUEST_OFFSET(RigidBody, position, 208);
+GUEST_OFFSET(RigidBody, orientation, 224);
+GUEST_OFFSET(RigidBody, transform, 288);
+GUEST_OFFSET(RigidBody, inertia, 352);
+GUEST_OFFSET(RigidBody, inverse_inertia, 368);
+
+struct CollisionObject {
+  u32_be vtable;
+  uint8_t unknown_4[28];
+  CollisionShape shape;
+  uint8_t unknown_80[80];
+  Vector unknown_160[2];
+  uint8_t unknown_192[16];
+  Vector size;
+  uint8_t unknown_224[40];
+  u32_be unknown_264;
+  u32_be unknown_268;
+  uint8_t unknown_272[32];
+  Vector unknown_304;
+};
+GUEST_SIZE(CollisionObject, 320);
+GUEST_OFFSET(CollisionObject, vtable, 0);
+GUEST_OFFSET(CollisionObject, shape, 32);
+GUEST_OFFSET(CollisionObject, size, 208);
+
+struct DrivetrainAxle {
+  f32_be values[68];
+};
+GUEST_SIZE(DrivetrainAxle, 272);
+GUEST_OFFSET(DrivetrainAxle, values, 0);
+
+struct CarData {
+  Vector unknown_0;
+  uint8_t unknown_16[16];
+  Vector unknown_32[6];
+  f32_be handbrake_rate;  // How fast the handbrake comes on, per second.
+  f32_be unknown_132[2];
+  uint8_t unknown_140[40];
+  f32_be unknown_180;
+  uint8_t unknown_184[80];
+  f32_be unknown_264[2];
+  uint8_t unknown_272[4];
+  f32_be unknown_276[8];
+  uint8_t unknown_308[8];
+  f32_be unknown_316;
+  f32_be unknown_320;
+  f32_be unknown_324;
+  f32_be unknown_328;
+  f32_be unknown_332;
+  DrivetrainAxle axles[2];
+  f32_be unknown_880[96];
+  f32_be reverse_throttle_rate;
+  f32_be drivetrain[109];  // The gearbox among it (Vehicle::SetGearValues).
+  Vector unknown_1704;
+  f32_be unknown_1720[3];
+  uint8_t unknown_1732[4];
+  f32_be unknown_1736[3];
+  f32_be unknown_1748;
+  uint8_t unknown_1752[4];
+  f32_be unknown_1756;
+  Vector unknown_1760;
+  Vector unknown_1776;
+  f32_be unknown_1792[2];
+  uint8_t unknown_1800[8];
+  f32_be unknown_1808[3];
+  uint8_t unknown_1820[36];
+};
+GUEST_SIZE(CarData, 1856);
+GUEST_OFFSET(CarData, handbrake_rate, 128);
+GUEST_OFFSET(CarData, axles, 336);
+GUEST_OFFSET(CarData, reverse_throttle_rate, 1264);
+GUEST_OFFSET(CarData, drivetrain, 1268);
+
+struct Wheel {
+  Vector unknown_0;
+  uint8_t unknown_16[2];
+  uint8_t unknown_18[2];
+  u32_be unknown_20[5];
+  uint8_t unknown_40[8];
+  Vector unknown_48;
+  Vector unknown_64;
+  Vector position;  // In the world.
+  f32_be unknown_96;
+  f32_be unknown_100[3];  // Not copied by Wheel::Copy.
+  Vector unknown_112[3];
+  Vector unknown_160[2];
+  u32_be surface;  // The kind of road under it.
+  u32_be unknown_196;
+  f32_be surface_value_12;  // From the surface's record (+12, +16, +20).
+  f32_be surface_value_16;
+  u32_be unknown_208;
+  f32_be surface_value_20;
+  u32_be unknown_216[6];
+  uint8_t unknown_240[4];
+  u32_be unknown_244[23];
+  Vector unknown_336;
+  f32_be unknown_352[2];
+  f32_be unknown_360[2];  // Not copied by Wheel::Copy.
+};
+GUEST_SIZE(Wheel, 368);
+GUEST_OFFSET(Wheel, position, 80);
+GUEST_OFFSET(Wheel, surface, 192);
+GUEST_OFFSET(Wheel, surface_value_12, 200);
+GUEST_OFFSET(Wheel, surface_value_16, 204);
+GUEST_OFFSET(Wheel, surface_value_20, 212);
+
+struct VehicleDynamics {
+  Vector unknown_0[3];
+  f32_be speed;  // m/s
+  uint8_t unknown_52[12];
+  Vector unknown_64;
+  uint8_t unknown_80[16];
+  Vector unknown_96[3];
+  uint8_t unknown_144[128];
+  ptr<CarData> car_data;
+  uint8_t unknown_276[8];
+  f32_be throttle;  // 0.0 to 1.0, as the input sets them.
+  f32_be reverse_throttle;
+  f32_be brake;
+  f32_be handbrake;
+  uint8_t unknown_300[36];
+  ptr<RigidBody> body;
+  ptr<CollisionObject> collision_object;
+  u32_be other_object;  // An object with a virtual destructor; not worked out.
+  uint8_t unknown_348[4];
+  Vector unknown_352[3];
+  Wheel wheels[4];
+  uint8_t unknown_1872[16];
+  Vector unknown_1888[6];
+  uint8_t unknown_1984[32];
+  Vector unknown_2016[6];
+  uint8_t unknown_2112[112];
+  f32_be unknown_2224;
+  uint8_t unknown_2228[24];
+  i32_be gear;  // -1 reverse, 0 neutral, then the gears.
+  uint8_t unknown_2256[48];
+  f32_be gear_value_2304;
+  f32_be gear_value_2308;
+  f32_be unknown_2312;
+  uint8_t unknown_2316[4];
+  f32_be unknown_2320;
+  f32_be unknown_2324;
+  f32_be unknown_2328;
+  uint8_t unknown_2332[4];
+  f32_be unknown_2336;
+  uint8_t unknown_2340[12];
+  f32_be step_length;  // Seconds per physics step, and 1 over it.
+  f32_be step_rate;
+  uint8_t unknown_2360[8];
+  u32_be step_iterations;
+  uint8_t unknown_2372[13];
+  uint8_t unknown_2385;
+  uint8_t unknown_2386[2];
+  f32_be unknown_2388;
+  uint8_t unknown_2392[4];
+  f32_be unknown_2396;
+  uint8_t unknown_2400[64];
+  Vector unknown_2464[2];
+  uint8_t unknown_2496[32];
+  Vector unknown_2528[6];
+  uint8_t unknown_2624;
+  uint8_t unknown_2625[39];
+  uint8_t has_surfaces;
+  uint8_t unknown_2665[3];
+  u32_be front_surfaces[32];  // A surface's record, by its kind, for the front wheels.
+  u32_be rear_surfaces[32];  // And for the rear ones.
+  uint8_t unknown_2924[244];
+  Vector unknown_3168[4];
+  uint8_t unknown_3232[16];
+  Vector unknown_3248[8];
+};
+GUEST_SIZE(VehicleDynamics, 3376);
+GUEST_OFFSET(VehicleDynamics, speed, 48);
+GUEST_OFFSET(VehicleDynamics, car_data, 272);
+GUEST_OFFSET(VehicleDynamics, throttle, 284);
+GUEST_OFFSET(VehicleDynamics, reverse_throttle, 288);
+GUEST_OFFSET(VehicleDynamics, brake, 292);
+GUEST_OFFSET(VehicleDynamics, handbrake, 296);
+GUEST_OFFSET(VehicleDynamics, body, 336);
+GUEST_OFFSET(VehicleDynamics, collision_object, 340);
+GUEST_OFFSET(VehicleDynamics, other_object, 344);
+GUEST_OFFSET(VehicleDynamics, wheels, 400);
+GUEST_OFFSET(VehicleDynamics, gear, 2252);
+GUEST_OFFSET(VehicleDynamics, gear_value_2304, 2304);
+GUEST_OFFSET(VehicleDynamics, gear_value_2308, 2308);
+GUEST_OFFSET(VehicleDynamics, step_length, 2352);
+GUEST_OFFSET(VehicleDynamics, step_rate, 2356);
+GUEST_OFFSET(VehicleDynamics, step_iterations, 2368);
+GUEST_OFFSET(VehicleDynamics, has_surfaces, 2664);
+GUEST_OFFSET(VehicleDynamics, front_surfaces, 2668);
+GUEST_OFFSET(VehicleDynamics, rear_surfaces, 2796);

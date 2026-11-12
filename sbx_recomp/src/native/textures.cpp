@@ -560,6 +560,8 @@ struct TextureCache::State {
   // 3D view share one); draws sample the one written last (`current`).
   std::unordered_map<uint64_t, Texture> resolved;
   std::unordered_map<uint32_t, Texture*> current;
+  // When MarkWritten last took the writes (a write it takes is newer).
+  std::chrono::steady_clock::time_point writes_taken{};
   static uint64_t ResolveKey(uint32_t page, float scale) {
     return uint64_t(std::bit_cast<uint32_t>(scale)) << 32 | page;
   }
@@ -1248,6 +1250,34 @@ void TextureCache::State::MarkWritten() {
       }
     }
   }
+  // A write over the start of a resolve destination that hasn't been
+  // resolved into since the writes were last taken: the game has freed it
+  // and put a texture there (a menu's animation frame where the race's
+  // frame copy was). Draws sample guest memory at that address again, not
+  // the old resolved image; a later resolve into it brings it back. One
+  // resolved into since is left: its memory may have been written before
+  // the resolve (set up, then resolved into, within a frame).
+  auto now = std::chrono::steady_clock::now();
+  if (!current.empty()) {
+    for (const auto& [start, end] : new_writes) {
+      for (auto c = current.begin(); c != current.end();) {
+        const Texture& t = *c->second;
+        if (start <= t.layout.base_address && t.layout.base_address < end &&
+            t.last_resolved < writes_taken) {
+          if (log_memory) {
+            ITC_LOG_INFO("native renderer: resolve destination at {:08X} (format {} {}x{}) no "
+                         "longer sampled: its memory was written",
+                         t.layout.base_address, t.guest_format, t.layout.width, t.layout.height);
+          }
+          c = current.erase(c);
+          stats.marked++;  // the answers kept for this address are asked again
+        } else {
+          ++c;
+        }
+      }
+    }
+  }
+  writes_taken = now;
 }
 
 bool TextureCache::Holds(uint32_t start, uint32_t end) const {

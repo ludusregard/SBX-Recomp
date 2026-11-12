@@ -1,0 +1,73 @@
+struct Member13360 {
+  GameObject object;
+  uint8_t unknown_336[24];
+  i32_be unknown_360;
+  uint8_t unknown_364[20];
+  Vector unknown_384[3];
+  uint8_t unknown_432[16];
+  u32_be unknown_448;
+  u32_be unknown_452;
+  uint8_t unknown_456[42560];
+  Buffer28 buffers[4];
+  uint8_t unknown_43128[8];
+  GameObject384 unknown_43136;
+};
+GUEST_SIZE(Member13360, 43520);
+GUEST_OFFSET(Member13360, object, 0);
+GUEST_OFFSET(Member13360, buffers, 43016);
+
+struct Member56896 {
+  GameObject object;
+  uint8_t unknown_336[10444];
+  XprHolder xprs;
+};
+GUEST_SIZE(Member56896, 10836);
+GUEST_OFFSET(Member56896, object, 0);
+GUEST_OFFSET(Member56896, xprs, 10780);
+
+struct Entry20 {
+  u32_be words[5];
+};
+GUEST_SIZE(Entry20, 20);
+GUEST_OFFSET(Entry20, words, 0);
+
+struct Member67760 {
+  GameObject object;
+  uint8_t unknown_336[16];
+  FixedList<16, Entry20> list;
+  u32_be unknown_748;
+  u32_be unknown_752;
+  u32_be unknown_756;
+};
+GUEST_SIZE(Member67760, 760);
+GUEST_OFFSET(Member67760, object, 0);
+GUEST_OFFSET(Member67760, list, 352);
+
+struct Block1104 {
+  uint8_t unknown_0[1088];
+  Vector unknown_1088;
+};
+GUEST_SIZE(Block1104, 1104);
+
+struct RaceModeMember {
+  u32_be vtable;
+  uint8_t unknown_4[12];
+  StateMachine machine;
+  uint8_t unknown_9624[24];
+  GameObject1104 unknown_9648[2];
+  GameObject1104 unknown_11856;
+  uint8_t unknown_12960[16];
+  GameObject384 unknown_12976;
+  Member13360 unknown_13360;
+  Member56896 unknown_56880;
+  uint8_t unknown_67716[28];
+  Member67760 unknown_67744;
+  uint8_t unknown_68504[8];
+  Block1104 unknown_68512[8];
+  uint8_t unknown_77344[16];
+  i32_be unknown_77360;
+  u32_be unknown_77364[3];
+};
+GUEST_SIZE(RaceModeMember, 77376);
+GUEST_OFFSET(RaceModeMember, vtable, 0);
+GUEST_OFFSET(RaceModeMember, machine, 16);

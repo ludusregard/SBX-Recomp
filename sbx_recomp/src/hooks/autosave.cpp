@@ -44,6 +44,7 @@
 #include "hooks/autosave.h"
 
 #include "guest.h"
+#include "hooks/native_calls.h"
 
 #ifdef SBX_VULKAN_RENDERER
 #include "native/overlay.h"
@@ -332,5 +333,5 @@ extern "C" REX_FUNC(sub_8228CEE8) {
     ctx.r3.u64 = r3;
     ctx.lr = lr;
   }
-  __imp__sub_8228CEE8(ctx, base);
+  hooks::NativeSaveInterface_Write(ctx, base);
 }

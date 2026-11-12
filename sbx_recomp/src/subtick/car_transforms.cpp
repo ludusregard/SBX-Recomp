@@ -25,7 +25,8 @@
 // race is matched by its order within the main loop pass, the logic pass
 // records what each call is given, and on every pass a call given exactly the
 // tick's values builds the view from the blend instead. Calls given anything
-// else are left alone. More than 8 m between ticks is a cut, not blended.
+// else are left alone. A cut (the camera breaking from its motion: CameraCut)
+// isn't blended.
 // (Only pass 0 was blended at first: the mirror then drew the blended cars
 // from the tick's camera, and they juddered in it as they used to on screen.)
 //
@@ -43,6 +44,13 @@
 // CarTransforms_RebuildCamera makes those calls before Race::DrawStep: one
 // for each pass the last logic pass updated before its draw step.
 //
+// The menus' garage stage (the turning car and the camera around it,
+// sub_8217DD48) is drawn again on render-only passes in the menus
+// (per_frame_logic.cpp). Its camera calls are blended the same way, counted
+// only within the stage's steps, so a camera update elsewhere in a menu's
+// pass doesn't shift the order. The car is blended by Car::DrawUpdate, as in
+// a race.
+//
 // Wheel spin and steering still change once a tick.
 
 #include "subtick/car_transforms.h"
@@ -50,6 +58,7 @@
 #include "subtick/frame_pacer.h"
 #include "subtick/game_messages.h"
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -58,6 +67,7 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 REXCVAR_DECLARE(bool, subtick);
@@ -91,7 +101,51 @@ struct CameraPose {
   float prev[kCameraFloats] = {};
   float cur[kCameraFloats] = {};
   uint64_t tick = ~0ull;
+  // The eye's and the target's move over the tick before, once known (not
+  // on the tick after a cut or a gap).
+  float move[8] = {};
+  bool has_move = false;
 };
+
+float Distance3(const float* a, const float* b);
+
+// A camera cut between ticks: the eye or the target breaking from the way it
+// was moving. The move this tick is set against the move the tick before; a
+// difference over 1 m, or over half the move before (a fast camera moves
+// more each tick), is a cut: the view button (cockpit, dash, chase), a
+// demo's camera change, a menu's camera jumping to another place. A camera
+// moving fast but smoothly (the demo's fly-bys, a car at speed) isn't. (A
+// distance test cut those: 2026-11-11.)
+constexpr float kCutBreak = 1.0f;
+constexpr float kCutBreakShare = 0.5f;
+
+bool CameraCut(const CameraPose& pose, const float* now, float* move) {
+  bool cut = false;
+  if (!pose.has_move) {
+    for (int part = 0; part < 2; part++) {
+      for (int i = 0; i < 3; i++) {
+        move[4 * part + i] = now[4 * part + i] - pose.cur[4 * part + i];
+      }
+    }
+    return false;
+  }
+  for (int part = 0; part < 2; part++) {  // the eye (0-2), the target (4-6)
+    float* m = move + 4 * part;
+    const float* before = pose.move + 4 * part;
+    float change[3];
+    for (int i = 0; i < 3; i++) {
+      m[i] = now[4 * part + i] - pose.cur[4 * part + i];
+      change[i] = m[i] - before[i];
+    }
+    m[3] = 0.0f;
+    const float zero[3] = {};
+    const float limit = std::max(kCutBreak, kCutBreakShare * Distance3(before, zero));
+    if (Distance3(change, zero) > limit) {
+      cut = true;
+    }
+  }
+  return cut;
+}
 
 // One camera pass.
 struct Camera {
@@ -110,6 +164,9 @@ struct Camera {
 
 std::map<uint32_t, Camera> g_cameras;  // by the camera pass's address
 bool g_in_draw_step = false;           // between Race::DrawStep's start and end
+// In the menus, between CarTransforms_MenuStageBegin and End (a garage
+// stage step, per_frame_logic.cpp).
+bool g_in_menu_stage = false;
 
 void ReadFloats(uint8_t* base, uint32_t address, float* out, int n) {
   for (int i = 0; i < n; i++) {
@@ -157,7 +214,7 @@ bool CarsEnabled() {
 }
 
 bool CameraEnabled() {
-  return REXCVAR_GET(subtick) && GameMessages_InRace();
+  return REXCVAR_GET(subtick) && (GameMessages_InRace() || g_in_menu_stage);
 }
 
 // The frame's progress through the tick, fixed for the whole pass.
@@ -192,7 +249,7 @@ void CameraBegin(uint8_t* base, uint32_t address) {
       camera.updated_before_draw = false;
     }
   }
-  if (!GameMessages_IsRenderOnlyPass() && !g_in_draw_step) {
+  if (!GameMessages_IsRenderOnlyPass() && !g_in_draw_step && !g_in_menu_stage) {
     camera.updated_before_draw = true;
   }
   int call = camera.call++;
@@ -211,12 +268,15 @@ void CameraBegin(uint8_t* base, uint32_t address) {
   }
   if (!GameMessages_IsRenderOnlyPass() && pose.tick != tick) {
     bool consecutive = pose.tick + 1 == tick;
-    bool cut = consecutive &&
-               (Distance3(now, pose.cur) > kCut || Distance3(now + 4, pose.cur + 4) > kCut);
+    float move[8] = {};
+    bool cut = consecutive && CameraCut(pose, now, move);
     if (consecutive && !cut) {
       std::copy(pose.cur, pose.cur + kCameraFloats, pose.prev);
+      std::copy(move, move + 8, pose.move);
+      pose.has_move = true;
     } else {
       std::copy(now, now + kCameraFloats, pose.prev);
+      pose.has_move = false;
     }
     std::copy(now, now + kCameraFloats, pose.cur);
     pose.tick = tick;
@@ -461,6 +521,31 @@ void CarTransforms_DrawStepBegin() {
 
 void CarTransforms_DrawStepEnd() {
   g_in_draw_step = false;
+}
+
+bool CarTransforms_HoldsFrameCamera(uint8_t* base, uint32_t address) {
+  if (!CameraEnabled()) {
+    return false;
+  }
+  auto it = g_cameras.find(address);
+  if (it == g_cameras.end()) {
+    return false;
+  }
+  const Camera& camera = it->second;
+  if (!camera.held || camera.counted_pass != GameMessages_PassNumber()) {
+    return false;
+  }
+  float now[kCameraFloats];
+  ReadFloats(base, address + kCameraState, now, kCameraFloats);
+  return std::memcmp(now, camera.blend, sizeof(now)) == 0;
+}
+
+void CarTransforms_MenuStageBegin() {
+  g_in_menu_stage = true;
+}
+
+void CarTransforms_MenuStageEnd() {
+  g_in_menu_stage = false;
 }
 
 bool CarTransforms_CameraEnabled() {

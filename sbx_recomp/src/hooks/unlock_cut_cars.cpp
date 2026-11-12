@@ -21,6 +21,7 @@
 // --unlock_cut_cars=false turns it off.
 
 #include "guest.h"
+#include "hooks/native_calls.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -56,7 +57,7 @@ void UnlockCutCars(uint8_t* base, uint32_t save) {
 // SaveData::NewGame: r3 = the save.
 extern "C" REX_FUNC(sub_82113FB0) {
   uint32_t save = ctx.r3.u32;
-  __imp__sub_82113FB0(ctx, base);
+  hooks::NativeSaveData_NewGame(ctx, base);
   UnlockCutCars(base, save);
 }
 

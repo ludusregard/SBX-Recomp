@@ -8,6 +8,7 @@
 // Challenge); more may turn up (anything that runs too fast or flickers
 // only above 30 fps).
 
+#include "game/ui_movies.h"
 #include "guest.h"
 #include "hooks/native_calls.h"
 #include "subtick/car_transforms.h"
@@ -15,6 +16,7 @@
 #include "subtick/game_messages.h"
 #include "subtick/per_frame_logic.h"
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -34,6 +36,11 @@
 
 REXCVAR_DECLARE(bool, subtick);
 
+REXCVAR_DEFINE_BOOL(log_race_overlays, false, "SBX",
+                    "Diagnostic: log the race overlays' updates and recordings whenever what "
+                    "happens to them changes (a few passes either side; 2,000 lines at most): "
+                    "which handler ran on each logic pass and whether each pass recorded them");
+
 REXCVAR_DEFINE_BOOL(redraw_rival_logo, true, "SBX",
                     "Draw the rival's logo in the rival intro cutscene on render-only passes "
                     "too (the cutscene still steps once a tick)");
@@ -50,13 +57,27 @@ bool RenderOnly() {
 // and the state advances once a tick. Calls are matched by object and by
 // order within the pass (an object can be drawn once per view). If the
 // object changed since the logic pass, or the logic pass had no such call,
-// the call runs from the object's current state, which is then put back.
+// the call runs from the object's current state, which is then put back
+// (or, with `always_from_logic_pass`, from the logic pass's state before its
+// call all the same, if there was such a call).
 class ReplayFromLogicPass {
  public:
-  ReplayFromLogicPass(uint32_t bytes) : bytes_(bytes) {}
+  explicit ReplayFromLogicPass(uint32_t bytes, bool always_from_logic_pass = false)
+      : bytes_(bytes), always_from_logic_pass_(always_from_logic_pass) {}
+
+  // For the next Run on a render-only pass: a call the latest logic pass
+  // didn't make (by object and order) is skipped instead of run.
+  void SkipUnmatched(bool skip) { skip_unmatched_ = skip; }
 
   template <typename Call>
   void Run(uint8_t* base, uint32_t object, Call&& call) {
+    Run(base, object, call, [] {});
+  }
+
+  // `prepare` runs on a render-only pass once the logic pass's state before
+  // its call is back in place, just before the call.
+  template <typename Call, typename Prepare>
+  void Run(uint8_t* base, uint32_t object, Call&& call, Prepare&& prepare) {
     uint64_t pass = subtick::GameMessages_PassNumber();
     if (pass != pass_) {
       pass_ = pass;
@@ -64,23 +85,39 @@ class ReplayFromLogicPass {
     }
     Key key{object, occurrences_[object]++};
     uint8_t* state = base + object;
+    const bool skip_unmatched = skip_unmatched_;
+    skip_unmatched_ = false;
     if (!RenderOnly()) {
       States& states = states_[key];
       states.before.assign(state, state + bytes_);
       call();
       states.after.assign(state, state + bytes_);
+      states.logic_pass = pass;
       return;
     }
     auto it = states_.find(key);
+    if (skip_unmatched && (it == states_.end() ||
+                           it->second.logic_pass != subtick::GameMessages_LastLogicPass())) {
+      return;
+    }
     if (it == states_.end() || it->second.after.size() != bytes_) {
       CallFromCurrentState(state, call);
       return;
     }
     if (std::memcmp(state, it->second.after.data(), bytes_) != 0) {
+      if (always_from_logic_pass_) {
+        current_.assign(state, state + bytes_);
+        std::memcpy(state, it->second.before.data(), bytes_);
+        prepare();
+        call();
+        std::memcpy(state, current_.data(), bytes_);
+        return;
+      }
       CallFromCurrentState(state, call);
       return;
     }
     std::memcpy(state, it->second.before.data(), bytes_);
+    prepare();
     call();
     std::memcpy(state, it->second.after.data(), bytes_);
   }
@@ -105,8 +142,11 @@ class ReplayFromLogicPass {
   };
   struct States {
     std::vector<uint8_t> before, after;
+    uint64_t logic_pass = ~0ull;
   };
   uint32_t bytes_;
+  bool always_from_logic_pass_;
+  bool skip_unmatched_ = false;
   uint64_t pass_ = ~0ull;
   std::unordered_map<Key, States, KeyHash> states_;
   std::unordered_map<uint32_t, int> occurrences_;
@@ -115,6 +155,9 @@ class ReplayFromLogicPass {
 
 // UI movies' state: the furthest field ITC-Recomp found used, ~+0x96C8.
 ReplayFromLogicPass g_ui_movies(0xA000);
+// Draw-only UI movie updates: nothing to put back, matched only to skip
+// those the logic pass didn't make.
+ReplayFromLogicPass g_ui_movie_draws(0);
 // The car's boost value (car+704), which the draw update lowers.
 ReplayFromLogicPass g_boost(4);
 
@@ -139,6 +182,7 @@ constexpr uint32_t kOverlayUpdateSlot = 16;  // vtable offset of slot 4
 constexpr uint32_t kOverlayRecordSlot = 20;  // vtable offset of slot 5
 uint32_t g_overlay_list = 0;
 uint64_t g_overlay_tick = ~0ull;
+bool g_overlay_paused = false;  // last saved by the paused recording, not by an update
 
 void ForEachOverlay(PPCContext& ctx, uint8_t* base, uint32_t list, uint32_t slot) {
   for (uint32_t i = 0; i < kOverlayCount; i++) {
@@ -303,7 +347,7 @@ void NotePutBackTargets(uint8_t* base, const std::vector<AddedTarget>& added) {
 extern "C" REX_FUNC(sub_82585C40) {
   REX_FUNC_PROLOGUE();
   if (g_added == nullptr || guest::LoadU8(base, kTrackPropertiesReady) == 0) {
-    __imp__sub_82585C40(ctx, base);
+    hooks::NativeUiMovies_ApplyTrack(ctx, base);
     return;
   }
   uint32_t node = ctx.r3.u32, track = ctx.r4.u32;
@@ -312,7 +356,7 @@ extern "C" REX_FUNC(sub_82585C40) {
   bool adds = property < kTrackPropertyCount && guest::LoadU8(base, descriptor + 8) == 0;
   uint32_t type = property < kTrackPropertyCount ? guest::LoadU32(base, descriptor + 4) : 3;
   if (!adds || type >= 3) {
-    __imp__sub_82585C40(ctx, base);
+    hooks::NativeUiMovies_ApplyTrack(ctx, base);
     return;
   }
   uint32_t target = TrackTarget(base, node, track, descriptor);
@@ -323,7 +367,113 @@ extern "C" REX_FUNC(sub_82585C40) {
   } else {
     g_added->push_back({target, guest::LoadU32(base, target)});
   }
-  __imp__sub_82585C40(ctx, base);
+  hooks::NativeUiMovies_ApplyTrack(ctx, base);
+}
+
+// A UI movie drawn on a render-only pass from its state
+// before the logic pass's update, with its running animations moved on by
+// the part of a step the frame is through the tick (the update steps their
+// time by kUiMovieStep a tick, in the 60ths of a second its keys use).
+// Clamped to the animation, as the update clamps a queued one; a looping
+// one isn't wrapped early.
+namespace {
+constexpr float kUiMovieStep = 2.0f;  // UiMovie::Update's step (0x820021A8)
+
+void MoveOn(game::AnimationSlot* slot, float amount) {
+  if (slot->hold != 0) {
+    return;
+  }
+  float time = slot->time;
+  time = slot->backwards != 0 ? time - amount : time + amount;
+  const float length = slot->animation->length;
+  slot->time = time < 0.0f ? 0.0f : time > length ? length : time;
+}
+
+void BlendUiMovie(uint8_t* base, uint32_t movie_address) {
+  game::UiMovie* movie = guest::At<game::UiMovie>(movie_address);
+  const float amount = kUiMovieStep * subtick::GetFramePacer().FrameProgress();
+  for (int32_t i = 0; i < movie->queue.count; i++) {
+    game::AnimationSlot* slot = movie->queue.ItemAtPosition(uint32_t(i));
+    MoveOn(slot, amount);
+    if (slot->with_next == 0) {
+      break;  // the update steps no further
+    }
+  }
+  for (int32_t i = 0; i < movie->looping.count; i++) {
+    MoveOn(movie->looping.ItemAtPosition(uint32_t(i)), amount);
+  }
+}
+
+// In the menus: the drawing the last logic pass did while delivering its
+// messages (the menus draw there), in order, to draw again on render-only
+// passes (PerFrameLogic_RedrawMenuUiMovies): the top-level UI movie updates,
+// the garage stage's steps (the car on its turntable and the camera around
+// it) and the parking area's scene.
+struct MenuDrawCall {
+  enum Kind { kUiMovie, kGarageStage, kParkingArea };
+  Kind kind;
+  uint32_t r3, r4, r5;
+};
+std::vector<MenuDrawCall> g_menu_draw_calls;
+uint64_t g_menu_draw_pass = ~0ull;
+bool g_menu_redrawing = false;  // during PerFrameLogic_RedrawMenuUiMovies
+
+// Notes a drawing call made by the logic pass's messages in the menus.
+void NoteMenuDrawCall(MenuDrawCall call) {
+  const uint64_t pass = subtick::GameMessages_PassNumber();
+  if (pass != g_menu_draw_pass) {
+    g_menu_draw_pass = pass;
+    g_menu_draw_calls.clear();
+  }
+  g_menu_draw_calls.push_back(call);
+}
+
+void RedrawParkingArea(PPCContext& ctx, uint8_t* base, uint32_t area);
+
+bool NotingMenuDrawCalls() {
+  return REXCVAR_GET(subtick) && !RenderOnly() &&
+         subtick::GameMessages_Delivering() && !subtick::GameMessages_InRace();
+}
+}  // namespace
+
+void subtick::PerFrameLogic_RedrawMenuUiMovies(PPCContext& ctx, uint8_t* base) {
+  if (g_menu_draw_pass != subtick::GameMessages_LastLogicPass()) {
+    return;  // the logic pass's messages drew nothing
+  }
+  const uint64_t r3 = ctx.r3.u64, r4 = ctx.r4.u64, r5 = ctx.r5.u64;
+  g_menu_redrawing = true;
+  for (const MenuDrawCall& call : g_menu_draw_calls) {
+    ctx.r3.u64 = call.r3;
+    ctx.r4.u64 = call.r4;
+    ctx.r5.u64 = call.r5;
+    // The wrappers below: replayed from the logic pass.
+    if (call.kind == MenuDrawCall::kUiMovie) {
+      sub_8211D4B8(ctx, base);
+    } else if (call.kind == MenuDrawCall::kGarageStage) {
+      sub_8217DD48(ctx, base);
+    } else {
+      RedrawParkingArea(ctx, base, call.r3);
+    }
+  }
+  g_menu_redrawing = false;
+  ctx.r3.u64 = r3;
+  ctx.r4.u64 = r4;
+  ctx.r5.u64 = r5;
+}
+
+// AudioManager::PlayCue (sub_821196D0; from its vtable's 2D and 3D cue
+// slots, sub_82119808 and sub_821197D8: the vtable is 0x82008318, the
+// AudioManager's first, so MenuSound::Play's slot 10 is sub_82119808). The
+// drawing the menus redraw between ticks can start sounds the logic pass's
+// call already started (the garage car's door and hood opening): none is
+// started while redrawing.
+extern "C" REX_FUNC(sub_821196D0) {
+  REX_FUNC_PROLOGUE();
+  if (g_menu_redrawing) {
+    ctx.r3.u64 = 0;
+    return;
+  }
+  __imp__sub_821196D0(ctx, base);
 }
 
 // UI movie update: r3 = the movie, r4 = 0 advances a frame and draws, 1
@@ -341,10 +491,24 @@ extern "C" REX_FUNC(sub_8211D4B8) {
     g_added = &g_added_by_depth[g_update_depth++];
     g_added->clear();
   }
-  if (ctx.r4.u32 != 0 || !REXCVAR_GET(subtick)) {
-    __imp__sub_8211D4B8(ctx, base);
+  if (tracks && g_update_depth == 1 && NotingMenuDrawCalls()) {
+    NoteMenuDrawCall({MenuDrawCall::kUiMovie, ctx.r3.u32, ctx.r4.u32, 0});
+  }
+  // In a race, a render-only pass draws only the UI movies the tick's logic
+  // pass drew: the HUD drew again for a frame after the race's result had
+  // taken it down (John's tests, 2026-11-11).
+  const bool race = subtick::GameMessages_InRace();
+  if (!REXCVAR_GET(subtick)) {
+    hooks::NativeUiMovies_Update(ctx, base);
+  } else if (ctx.r4.u32 != 0) {
+    g_ui_movie_draws.SkipUnmatched(race);
+    g_ui_movie_draws.Run(base, ctx.r3.u32, [&] { hooks::NativeUiMovies_Update(ctx, base); });
   } else {
-    g_ui_movies.Run(base, ctx.r3.u32, [&] { __imp__sub_8211D4B8(ctx, base); });
+    const uint32_t movie = ctx.r3.u32;
+    g_ui_movies.SkipUnmatched(race);
+    g_ui_movies.Run(
+        base, movie, [&] { hooks::NativeUiMovies_Update(ctx, base); },
+        [&] { BlendUiMovie(base, movie); });
   }
   if (tracks) {
     if (!RenderOnly()) {
@@ -353,6 +517,254 @@ extern "C" REX_FUNC(sub_8211D4B8) {
     g_update_depth--;
   }
   g_added = added_before;
+}
+
+// The garage stage's step (sub_8217DD48): r3 the stage's holder (+0 the
+// stage, 6208 bytes), r5 whether to keep the camera's pitch in range. Moves
+// the camera around the car and turns the car, then poses and draws the car
+// on its stage. The garage and its shops call it from their messages, once a
+// tick. It's called again on render-only passes in the menus
+// (PerFrameLogic_RedrawMenuUiMovies), from the stage as it was before the
+// logic pass's call, and the stage is put back after: the camera passes it
+// updates and the car are blended between ticks (car_transforms.cpp).
+namespace {
+constexpr uint32_t kGarageStageBytes = 6208;
+ReplayFromLogicPass g_garage_stage(kGarageStageBytes, true);
+
+bool GarageStageBlended() {
+  return REXCVAR_GET(subtick) &&
+         !subtick::GameMessages_InRace();
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_8217DD48) {
+  REX_FUNC_PROLOGUE();
+  const uint32_t stage = guest::LoadU32(base, ctx.r3.u32);
+  if (!GarageStageBlended() || stage == 0) {
+    __imp__sub_8217DD48(ctx, base);
+    return;
+  }
+  if (g_update_depth == 0 && NotingMenuDrawCalls()) {
+    NoteMenuDrawCall({MenuDrawCall::kGarageStage, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32});
+  }
+  subtick::CarTransforms_MenuStageBegin();
+  g_garage_stage.Run(base, stage, [&] { __imp__sub_8217DD48(ctx, base); });
+  subtick::CarTransforms_MenuStageEnd();
+}
+
+// The parking area's scene (sub_82225DE0, r3 the area, [0x8280DE60]): sets
+// its camera (from the area's +592 eye and +608 target, set once a tick) and
+// draws its scenery. Its handler (sub_8222C840, message 0) then draws the
+// cars on it: the draw object's +5004 set, sub_82225918, sub_820C93A8 and
+// sub_820C5BA0 (the draw object, 0). In the menus the scene and
+// the cars are drawn again on render-only passes
+// (PerFrameLogic_RedrawMenuUiMovies), the camera blended between ticks as
+// the garage stage's is. Nothing in it steps once a tick (the scenery's
+// animations are kept to once a tick by ModelAnimations::Apply below).
+namespace {
+constexpr uint32_t kDrawObject = 0x826B2B24;  // holds the draw object
+constexpr uint32_t kDrawObjectCarsShown = 5004;
+
+void RedrawParkingArea(PPCContext& ctx, uint8_t* base, uint32_t area) {
+  ctx.r3.u64 = area;
+  sub_82225DE0(ctx, base);  // the wrapper below
+  const uint32_t draw = guest::LoadU32(base, kDrawObject);
+  if (draw == 0) {
+    return;
+  }
+  guest::StoreU32(base, draw + kDrawObjectCarsShown, 1);
+  sub_82225918(ctx, base);
+  sub_820C93A8(ctx, base);
+  ctx.r3.u64 = draw;
+  ctx.r4.u64 = 0;
+  sub_820C5BA0(ctx, base);
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_82225DE0) {
+  REX_FUNC_PROLOGUE();
+  if (!GarageStageBlended()) {
+    __imp__sub_82225DE0(ctx, base);
+    return;
+  }
+  if (g_update_depth == 0 && NotingMenuDrawCalls()) {
+    NoteMenuDrawCall({MenuDrawCall::kParkingArea, ctx.r3.u32, 0, 0});
+  }
+  subtick::CarTransforms_MenuStageBegin();
+  __imp__sub_82225DE0(ctx, base);
+  subtick::CarTransforms_MenuStageEnd();
+}
+
+// Scrolling text (the garage's ticker): a UI movie keeps a record per
+// scrolling text, found by the text's id in its node map (movie+39884,
+// sub_8211B4E0): +4 set, +8 a frame count, +12 the frames to wait before
+// scrolling, +16 the speed. TickerText::Offset (sub_8211B9D0, r3 the movie,
+// r4 the text's draw: +0 its x, +8 its width, +120 its id) returns the x it
+// is drawn at, from the frame count; TickerText::Step (sub_8211BB10, r3 the
+// movie, r4 the id) counts a frame. The movie's queued text draw
+// (sub_8211CF58) steps it after every draw that isn't draw-only, so with
+// the menus' UI movies drawn again between ticks it scrolled once a frame.
+// On render-only passes the step is skipped, and the x is taken between the
+// last frame count's and the one before by the frame's progress through the
+// tick (not across the text starting over: a jump of more than 64).
+namespace {
+constexpr uint32_t kMovieNodeMap = 39884;
+constexpr uint32_t kTickerTextId = 120;
+constexpr uint32_t kTickerFrames = 8;
+constexpr float kTickerJump = 64.0f;
+
+uint32_t TickerRecord(PPCContext& ctx, uint8_t* base, uint32_t movie, uint32_t id) {
+  const uint64_t r3 = ctx.r3.u64, r4 = ctx.r4.u64, lr = ctx.lr;
+  uint32_t slot;
+  {
+    guest::StackFrame frame(ctx, 112);
+    const uint32_t key = frame.Local(80);
+    guest::StoreU32(base, key, id);
+    ctx.r3.u64 = movie + kMovieNodeMap;
+    ctx.r4.u64 = key;
+    sub_8211B4E0(ctx, base);
+    slot = ctx.r3.u32;
+  }
+  ctx.r3.u64 = r3;
+  ctx.r4.u64 = r4;
+  ctx.lr = lr;
+  return slot ? guest::LoadU32(base, slot) : 0;
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_8211BB10) {
+  REX_FUNC_PROLOGUE();
+  if (REXCVAR_GET(subtick) && RenderOnly()) {
+    return;  // counted once a tick, on logic passes
+  }
+  __imp__sub_8211BB10(ctx, base);
+}
+
+extern "C" REX_FUNC(sub_8211B9D0) {
+  REX_FUNC_PROLOGUE();
+  if (!REXCVAR_GET(subtick) || !RenderOnly()) {
+    __imp__sub_8211B9D0(ctx, base);
+    return;
+  }
+  const uint64_t r3 = ctx.r3.u64, r4 = ctx.r4.u64;
+  const uint32_t record =
+      TickerRecord(ctx, base, ctx.r3.u32, guest::LoadU32(base, ctx.r4.u32 + kTickerTextId));
+  if (record == 0) {
+    __imp__sub_8211B9D0(ctx, base);
+    return;
+  }
+  const uint32_t frames = guest::LoadU32(base, record + kTickerFrames);
+  __imp__sub_8211B9D0(ctx, base);
+  const double now = ctx.f1.f64;
+  if (frames == 0) {
+    return;
+  }
+  // The x one frame count earlier: what the logic pass drew.
+  guest::StoreU32(base, record + kTickerFrames, frames - 1);
+  ctx.r3.u64 = r3;
+  ctx.r4.u64 = r4;
+  __imp__sub_8211B9D0(ctx, base);
+  const double before = ctx.f1.f64;
+  guest::StoreU32(base, record + kTickerFrames, frames);
+  const float t = std::clamp(subtick::GetFramePacer().FrameProgress(), 0.0f, 1.0f);
+  ctx.f1.f64 = std::fabs(now - before) > kTickerJump ? now : before + (now - before) * t;
+}
+
+// A scene model's animations (sub_8257A460, r3 the model; from
+// Scenery::Draw, every pass): two lists, at +304 (16-byte entries, the time
+// at +12) and +364 (32-byte entries, the time at +16); each list: +0 set,
+// +4 its count's address, +8 the clips (80 bytes each: start +72, end +76),
+// +16 the entries. Each animation is applied at its time, then the time
+// steps one frame (wrapping at the clip's end): the course's moving
+// textures (scrolling signs and the like). On a render-only pass each is
+// applied at the logic pass's time plus the frame's progress through the
+// tick (held at the clip's end), and the times are put back after: they
+// step once a tick, and move smoothly between. A model the logic pass
+// didn't step, or that changed since, is applied at its time as it is.
+namespace {
+struct AnimationListLayout {
+  uint32_t offset, entry_bytes, time;
+};
+constexpr AnimationListLayout kModelAnimationLists[] = {{304, 16, 12}, {364, 32, 16}};
+constexpr uint32_t kAnimationListSet = 0;
+constexpr uint32_t kAnimationListCount = 4;
+constexpr uint32_t kAnimationListClips = 8;
+constexpr uint32_t kAnimationListEntries = 16;
+constexpr uint32_t kAnimationClipBytes = 80;
+constexpr uint32_t kAnimationClipEnd = 76;
+
+// The addresses of a model's animation times, and their clips' ends.
+void ModelAnimationTimes(uint8_t* base, uint32_t model, std::vector<uint32_t>& times,
+                         std::vector<float>& ends) {
+  times.clear();
+  ends.clear();
+  for (const AnimationListLayout& layout : kModelAnimationLists) {
+    const uint32_t list = model + layout.offset;
+    if (guest::LoadU32(base, list + kAnimationListSet) == 0) {
+      continue;
+    }
+    const uint32_t count = guest::LoadU32(base, guest::LoadU32(base, list + kAnimationListCount));
+    const uint32_t entries = guest::LoadU32(base, list + kAnimationListEntries);
+    const uint32_t clips = guest::LoadU32(base, list + kAnimationListClips);
+    for (uint32_t i = 0; i < count && i < 4096; i++) {
+      times.push_back(entries + i * layout.entry_bytes + layout.time);
+      ends.push_back(guest::LoadFloat(base, clips + i * kAnimationClipBytes + kAnimationClipEnd));
+    }
+  }
+}
+
+struct ModelAnimationTicks {
+  uint64_t tick = ~0ull;
+  std::vector<float> before, after;
+};
+std::unordered_map<uint32_t, ModelAnimationTicks> g_model_animations;
+std::vector<uint32_t> g_animation_times;
+std::vector<float> g_animation_ends;
+
+std::vector<float> ReadTimes(uint8_t* base, const std::vector<uint32_t>& times) {
+  std::vector<float> values(times.size());
+  for (size_t i = 0; i < times.size(); i++) {
+    values[i] = guest::LoadFloat(base, times[i]);
+  }
+  return values;
+}
+
+void WriteTimes(uint8_t* base, const std::vector<uint32_t>& times, const std::vector<float>& values) {
+  for (size_t i = 0; i < times.size(); i++) {
+    guest::StoreFloat(base, times[i], values[i]);
+  }
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_8257A460) {
+  REX_FUNC_PROLOGUE();
+  if (!REXCVAR_GET(subtick)) {
+    __imp__sub_8257A460(ctx, base);
+    return;
+  }
+  const uint32_t model = ctx.r3.u32;
+  const uint64_t tick = subtick::GetFramePacer().TicksReleased();
+  ModelAnimationTimes(base, model, g_animation_times, g_animation_ends);
+  std::vector<float> now = ReadTimes(base, g_animation_times);
+  if (!RenderOnly()) {
+    ModelAnimationTicks& ticks = g_model_animations[model];
+    ticks.before = now;
+    __imp__sub_8257A460(ctx, base);
+    ticks.after = ReadTimes(base, g_animation_times);
+    ticks.tick = tick;
+    return;
+  }
+  auto it = g_model_animations.find(model);
+  if (it != g_model_animations.end() && it->second.tick == tick && it->second.after == now) {
+    const float t = std::clamp(subtick::GetFramePacer().FrameProgress(), 0.0f, 1.0f);
+    std::vector<float> at = it->second.before;
+    for (size_t i = 0; i < at.size(); i++) {
+      at[i] = std::min(at[i] + t, std::max(at[i], g_animation_ends[i]));
+    }
+    WriteTimes(base, g_animation_times, at);
+  }
+  __imp__sub_8257A460(ctx, base);
+  WriteTimes(base, g_animation_times, now);
 }
 
 // The car's draw flag (Car::DrawUpdate's r3 + 4296; 0 and the call draws
@@ -488,8 +900,65 @@ extern "C" REX_FUNC(sub_820DA930) {
 // (which skip Update) had to reuse the logic pass's cameras, so the sprites
 // were drawn with an older camera than the world and shook against it.
 namespace {
-void SaveOverlays(uint8_t* base, uint32_t list) {
+// --log_race_overlays: each line has a pattern (its message with the numbers
+// taken out), kept per kind of pass (logic, render-only) and kind of line
+// (an update, the paused recording, the draw step). A line is logged when
+// its pattern differs from the last of its kinds, with the 4 lines before
+// it and the 4 after; a race's steady run logs nothing.
+int g_overlay_log_lines = 2000;
+std::deque<std::string> g_overlay_log_before;  // the latest lines not logged
+std::map<std::string, std::string> g_overlay_log_patterns;
+int g_overlay_log_after = 0;
+
+std::string OverlayLogPattern(const std::string& line) {
+  std::string pattern;
+  for (char c : line) {
+    if (c < '0' || c > '9') {
+      pattern += c;
+    } else if (pattern.empty() || pattern.back() != '#') {
+      pattern += '#';
+    }
+  }
+  return pattern;
+}
+
+template <typename... Args>
+void LogOverlays(fmt::format_string<Args...> format, Args&&... args) {
+  if (!REXCVAR_GET(log_race_overlays) || g_overlay_log_lines <= 0) {
+    return;
+  }
+  const char* pass_kind = RenderOnly() ? "render-only" : "logic";
+  std::string message = fmt::format(format, std::forward<Args>(args)...);
+  std::string line = fmt::format("race overlays: pass {} ({}), tick {}: {}",
+                                 subtick::GameMessages_PassNumber(), pass_kind,
+                                 subtick::GetFramePacer().TicksReleased(), message);
+  const std::string kind = std::string(pass_kind) + " " + message.substr(0, message.find(' '));
+  std::string& last = g_overlay_log_patterns[kind];
+  std::string pattern = OverlayLogPattern(message);
+  if (pattern != last) {
+    last = pattern;
+    for (const std::string& before : g_overlay_log_before) {
+      REXLOG_INFO("{}", before);
+      g_overlay_log_lines--;
+    }
+    g_overlay_log_before.clear();
+    g_overlay_log_after = 5;  // this line and the 4 after
+  }
+  if (g_overlay_log_after > 0) {
+    g_overlay_log_after--;
+    REXLOG_INFO("{}", line);
+    g_overlay_log_lines--;
+    return;
+  }
+  g_overlay_log_before.push_back(std::move(line));
+  if (g_overlay_log_before.size() > 4) {
+    g_overlay_log_before.pop_front();
+  }
+}
+
+void SaveOverlays(uint8_t* base, uint32_t list, bool paused) {
   g_overlay_list = list;
+  g_overlay_paused = paused;
   g_overlay_tick = subtick::GetFramePacer().TicksReleased();
   uint8_t* cameras = base + kCameraPasses;
   g_overlay_cameras.assign(cameras, cameras + kCameraPassesBytes);
@@ -506,7 +975,8 @@ extern "C" REX_FUNC(sub_8215BE00) {
     return;  // not expected (Update isn't delivered); recorded before the draw
   }
   uint32_t list = ctx.r3.u32;
-  SaveOverlays(base, list);
+  SaveOverlays(base, list, false);
+  LogOverlays("updated (RaceOverlays::Run), list {:08X}", list);
   // The original's frame (stwu r1,-112(r1)).
   guest::StackFrame frame(ctx, 112);
   ForEachOverlay(ctx, base, list, kOverlayUpdateSlot);
@@ -524,29 +994,48 @@ extern "C" REX_FUNC(sub_8215BE80) {
     __imp__sub_8215BE80(ctx, base);
     return;
   }
-  SaveOverlays(base, ctx.r3.u32);
+  SaveOverlays(base, ctx.r3.u32, true);
+  LogOverlays("recorded while paused (RaceOverlays::Record), list {:08X}", ctx.r3.u32);
 }
 
 namespace subtick {
 
 void PerFrameLogic_RecordRaceOverlays(PPCContext& ctx, uint8_t* base) {
-  // Updated (or, paused, recorded) on the latest tick, or the one before:
-  // a logic pass whose update comes after its draw step still draws what the
-  // frames before it drew.
+  // Updated (or, paused, recorded) on the latest tick. A logic pass's draw
+  // step can come before its update, so on a logic pass the tick before
+  // counts too: it draws what the frames before it drew, as the game does.
+  // Render-only passes after it draw only what that pass updated: once the
+  // overlays stop being updated (the race over, the rival's marker and its
+  // gauge gone), the frames between ticks stop drawing them at once.
+  // The tick before counts only after an update: after the paused
+  // recording (the results menu) the logic pass that resumes a free run drew
+  // the destroyed health gauge again for one tick.
   uint64_t tick = GetFramePacer().TicksReleased();
-  if (!REXCVAR_GET(subtick) || g_overlay_list == 0 ||
-      (g_overlay_tick != tick && g_overlay_tick + 1 != tick)) {
+  const bool latest = g_overlay_tick == tick;
+  const bool before_update = !RenderOnly() && !g_overlay_paused && g_overlay_tick + 1 == tick;
+  if (!REXCVAR_GET(subtick) || g_overlay_list == 0 || !(latest || before_update)) {
+    LogOverlays("draw step: not recorded (last updated on tick {})", g_overlay_tick);
     return;
   }
+  LogOverlays("draw step: recorded (updated on tick {})", g_overlay_tick);
   // The other camera passes as the overlays' update saw them (Draw reuses
-  // them for other views); pass 0 as built for this frame.
+  // them for other views), except those holding this frame's blend: pass 0,
+  // and any other pass built from the blend this frame (the rear-view mirror,
+  // rebuilt by CarTransforms_RebuildCamera on a render-only pass). Swapping
+  // the mirror back to the logic pass's camera drew its rival markers, smoke
+  // and trails once a tick against the blended cars (the mirror's judder).
   uint8_t* cameras = base + kCameraPasses;
-  std::vector<uint8_t> current;
-  bool swap = g_overlay_cameras.size() == kCameraPassesBytes;
-  if (swap) {
-    current.assign(cameras + kCameraPassBytes, cameras + kCameraPassesBytes);
-    std::memcpy(cameras + kCameraPassBytes, g_overlay_cameras.data() + kCameraPassBytes,
-                kCameraPassesBytes - kCameraPassBytes);
+  std::vector<uint32_t> swapped;  // the passes given the update's camera
+  std::vector<uint8_t> current;   // what they held, to put back
+  if (g_overlay_cameras.size() == kCameraPassesBytes) {
+    for (uint32_t offset = kCameraPassBytes; offset < kCameraPassesBytes; offset += kCameraPassBytes) {
+      if (CarTransforms_HoldsFrameCamera(base, kCameraPasses + offset)) {
+        continue;
+      }
+      swapped.push_back(offset);
+      current.insert(current.end(), cameras + offset, cameras + offset + kCameraPassBytes);
+      std::memcpy(cameras + offset, g_overlay_cameras.data() + offset, kCameraPassBytes);
+    }
   }
   uint64_t r3 = ctx.r3.u64;
   uint64_t lr = ctx.lr;
@@ -556,8 +1045,8 @@ void PerFrameLogic_RecordRaceOverlays(PPCContext& ctx, uint8_t* base) {
   }
   ctx.r3.u64 = r3;
   ctx.lr = lr;
-  if (swap) {
-    std::memcpy(cameras + kCameraPassBytes, current.data(), current.size());
+  for (size_t i = 0; i < swapped.size(); i++) {
+    std::memcpy(cameras + swapped[i], current.data() + i * kCameraPassBytes, kCameraPassBytes);
   }
 }
 

@@ -35,6 +35,8 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace native::overlay {
@@ -84,7 +86,7 @@ std::string g_save_status;
 bool g_save_failed = false;
 
 // The settings' tabs, in order (the renderer's own tab comes after them).
-constexpr std::array<const char*, 6> kTabs = {"Graphics", "Fixes",   "Hooks",
+constexpr std::array<const char*, 6> kTabs = {"Graphics", "Hooks",   "Overrides",
                                               "Logging",  "ReXGlue", "Vulkan"};
 
 // Our flags that are read once (at startup, or when first used): changing
@@ -413,6 +415,34 @@ struct Place {
   std::string group;
 };
 
+// The Overrides tab's group for a native code flag (--native_<subsystem>,
+// docs/native-code.md), by the subsystem's first word: a new flag named as
+// the others are lands in its group with nothing added here.
+const char* OverrideGroup(std::string_view subsystem) {
+  static const std::pair<const char*, std::array<std::string_view, 12>> kGroups[] = {
+      {"Race", {"race", "replay", "track", "racer", "ai", "minimap", "mode", "nearest"}},
+      {"Cars", {"car", "vehicle", "collision", "accessories", "tuning", "power", "stand", "front"}},
+      {"Scene",
+       {"scene", "second", "course", "material", "shader", "texture", "model", "models",
+        "scenery", "camera", "cameras", "post"}},
+      {"Menus and UI",
+       {"menu", "screen", "ui", "strings", "game", "location", "alt", "type67", "build",
+        "career", "boot", "movies"}},
+      {"Data and Saves", {"data", "file", "load", "save", "saves", "archive", "user"}},
+      {"Audio", {"sound", "audio", "xact", "xaudio"}},
+      {"Runtime",
+       {"c", "std", "framework", "heap", "memory", "helpers", "input", "action", "app",
+        "frame", "matrix", "display"}},
+  };
+  const std::string_view first = subsystem.substr(0, subsystem.find('_'));
+  for (const auto& [group, words] : kGroups) {
+    if (std::find(words.begin(), words.end(), first) != words.end()) {
+      return group;
+    }
+  }
+  return "Other";
+}
+
 // Our flags all share one SDK category ("SBX"), so they're placed by name
 // here. The SDK's categories ("GPU/Vulkan" and the like) are placed by theirs.
 // A new flag of ours shows under Hooks/Other until it's named here.
@@ -439,11 +469,11 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"blur_frame_blend_center", {"Graphics", "Experimental"}},
       {"blur_frame_blend_edge", {"Graphics", "Experimental"}},
       {"blur_frame_blend_shutter", {"Graphics", "Experimental"}},
-      {"per_tick_post_race_check", {"Fixes", "Race"}},
-      {"post_race_check_cycles", {"Fixes", "Race"}},
-      {"per_tick_car_draw_flag", {"Fixes", "Interpolation"}},
-      {"per_tick_cockpit_dials", {"Fixes", "Interpolation"}},
-      {"redraw_rival_logo", {"Fixes", "Interpolation"}},
+      {"per_tick_post_race_check", {"Hooks", "Fixes: Race"}},
+      {"post_race_check_cycles", {"Hooks", "Fixes: Race"}},
+      {"per_tick_car_draw_flag", {"Hooks", "Fixes: Interpolation"}},
+      {"per_tick_cockpit_dials", {"Hooks", "Fixes: Interpolation"}},
+      {"redraw_rival_logo", {"Hooks", "Fixes: Interpolation"}},
       {"skip_cutscenes", {"Hooks", "Title"}},
       {"attract_after_s", {"Hooks", "Title"}},
       {"unlock_cut_cars", {"Hooks", "Cars"}},
@@ -461,43 +491,6 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"language", {"Hooks", "Language"}},
       {"font_quality", {"Hooks", "Language"}},
       {"autosave", {"Hooks", "Saves"}},
-      {"native_accessories", {"Hooks", "Native Code"}},
-      {"native_car_makers", {"Hooks", "Native Code"}},
-      {"native_car_physics", {"Hooks", "Native Code"}},
-      {"native_car_specs", {"Hooks", "Native Code"}},
-      {"native_collision", {"Hooks", "Native Code"}},
-      {"native_course_scenery", {"Hooks", "Native Code"}},
-      {"native_data_files", {"Hooks", "Native Code"}},
-      {"native_data_load", {"Hooks", "Native Code"}},
-      {"native_data_tables", {"Hooks", "Native Code"}},
-      {"native_file_layer", {"Hooks", "Native Code"}},
-      {"native_framework", {"Hooks", "Native Code"}},
-      {"native_game_modes", {"Hooks", "Native Code"}},
-      {"native_load_poll", {"Hooks", "Native Code"}},
-      {"native_material_passes", {"Hooks", "Native Code"}},
-      {"native_menu_helpers", {"Hooks", "Native Code"}},
-      {"native_menu_sounds", {"Hooks", "Native Code"}},
-      {"native_race_hud", {"Hooks", "Native Code"}},
-      {"native_race_hud_object", {"Hooks", "Native Code"}},
-      {"native_race_scene", {"Hooks", "Native Code"}},
-      {"native_race_screens", {"Hooks", "Native Code"}},
-      {"native_race_sounds", {"Hooks", "Native Code"}},
-      {"native_race_states", {"Hooks", "Native Code"}},
-      {"native_replay_snapshots", {"Hooks", "Native Code"}},
-      {"native_save_data", {"Hooks", "Native Code"}},
-      {"native_save_interface", {"Hooks", "Native Code"}},
-      {"native_scene", {"Hooks", "Native Code"}},
-      {"native_scene_loaders", {"Hooks", "Native Code"}},
-      {"native_scene_models", {"Hooks", "Native Code"}},
-      {"native_screen_constructors", {"Hooks", "Native Code"}},
-      {"native_screen_objects", {"Hooks", "Native Code"}},
-      {"native_second_set", {"Hooks", "Native Code"}},
-      {"native_shader_objects", {"Hooks", "Native Code"}},
-      {"native_strings_and_font", {"Hooks", "Native Code"}},
-      {"native_texture_compression", {"Hooks", "Native Code"}},
-      {"native_track_zones", {"Hooks", "Native Code"}},
-      {"native_ui_movies", {"Hooks", "Native Code"}},
-      {"native_vehicle", {"Hooks", "Native Code"}},
       {"log_autosave", {"Logging", "Game"}},
       {"half_pixel_offset", {"Vulkan", "Renderer"}},
       {"dump_shaders", {"Logging", "Native Renderer"}},
@@ -510,6 +503,8 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
       {"log_file_opens", {"Logging", "Game"}},
       {"log_bgm", {"Logging", "Game"}},
       {"log_message_handlers", {"Logging", "Game"}},
+      {"log_race_overlays", {"Logging", "Game"}},
+      {"log_render_only_draws", {"Logging", "Native Renderer"}},
       {"log_gpu_memory", {"Logging", "Native Renderer"}},
       {"log_record_matrix", {"Logging", "Debugging"}},
       {"find_per_frame_state", {"Logging", "Debugging"}},
@@ -536,6 +531,9 @@ Place PlaceFlag(const rex::cvar::FlagEntry& entry) {
   }
   if (name.starts_with("native_renderer_")) {
     return {"Vulkan", "Debugging"};
+  }
+  if (name.starts_with("native_")) {
+    return {"Overrides", OverrideGroup(std::string_view(name).substr(7))};
   }
   // The SDK's window, presenter, GPU emulation and audio driver settings: our
   // renderer and audio replace those parts, so these change nothing here and

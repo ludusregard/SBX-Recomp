@@ -18,9 +18,13 @@ functions, no unresolved branches or calls. What else came over from
 ITC-Recomp, and what's next: `docs/itc-parity.md`.
 
 Native game code (`docs/native-code.md`): the game's own subsystems
-rewritten as our C++, each behind a `--native_<name>` flag (F4, Hooks /
-Native Code), tested by playing with the flag on and off; every flag is on
-by default. In and tested (2026-11-09): `native_menu_sounds`,
+rewritten as our C++, each behind a `--native_<name>` flag (F4, the Overrides
+tab, grouped by subsystem), tested by playing with the flag on and off; every flag is on
+by default. Since 2026-11-09 the generated ones (set-ups, resets, setters,
+copies, getters: 46 more files, 301 functions across 36 new flags and 10
+earlier ones, not yet played) are checked against the recompiled functions
+by `tools/native_gen/difftest` before they go in; 1,038 overrides in all.
+In and tested (2026-11-09): `native_menu_sounds`,
 `native_data_files`, `native_framework`, `native_car_specs`,
 `native_menu_helpers`, `native_race_hud`, `native_data_tables`,
 `native_file_layer`, `native_track_zones` and `native_race_scene`. Written
@@ -47,6 +51,16 @@ by default. In and tested (2026-11-09): `native_menu_sounds`,
 - The race-end music (the tutorial's `bgm_tmp_08`) cut off with
   `--subtick`: the forced exit waits for the screen fades, which stepped
   once a frame; they step once a tick now (`src/subtick/per_frame_logic.cpp`).
+- A menu bitmap showing an old frame (one frame of the garage menu's
+  animation showing the last race's view, or the garage's background),
+  now and then: the native renderer kept sampling a resolve destination's
+  image at an address after the game had freed it and put a texture
+  there. A memcpy write over the start of a resolve destination not
+  resolved into since drops it from the addresses draws sample
+  (`TextureCache::State::MarkWritten`, `src/native/textures.cpp`;
+  2026-11-09, not yet confirmed in play: the bug is rare). A button
+  bitmap sometimes drawn as a faint quad in the sub-menus may be the same
+  thing (its memory where a glow or blur target was); to watch.
 
 ## Experiments
 
@@ -116,10 +130,25 @@ by default. In and tested (2026-11-09): `native_menu_sounds`,
   replays play back 1:1. Car physics stays at 30 Hz and two steps a tick.
   Cars, the camera, paint reflections, light glows, light trails and the
   opponent marker are blended between ticks. The race overlays (opponent
-  marker, tire smoke) draw on every frame, paused or not. Open: wheel spin
+  marker, tire smoke) draw on every frame, paused or not, in the rear-view
+  mirror with the mirror's blended camera (fix for their judder there,
+  2026-11-10; not yet confirmed in game). Open: wheel spin
   and steering step per tick; check the light sources on car models for the
   same camera-position shake the paint reflections had. On by default (`src/subtick/`; "Subtick" in
-  `docs/functions.md`).
+  `docs/functions.md`). The menus too (frames between ticks: no message
+  delivered on them, the UI movies, the garage's car and camera, the
+  parking area's 3D and the scrolling text drawn between ticks and blended;
+  30 Hz for the tick a closing menu waits for its "closed" message; works,
+  John's tests 2026-11-11; the `--subtick_menus` flag is gone). The UI
+  movies' animations are drawn between ticks (works). The course's
+  scrolling textures step once a tick and move smoothly between (works).
+  Turning `--subtick` off mid-race works (it froze the game before).
+  Camera cuts: tabled (2026-11-11). A camera breaking from its motion
+  cuts instead of blending: about as good as the old 8 m test for the
+  demo's cuts, but the garage's and the view button's switches are still
+  blended between ticks (John's test). The HUD drawn for a frame after a
+  race's result took it down: a race's frames between ticks now draw only
+  the UI movies the tick drew; works (John's test, 2026-11-11).
 - Tick rate experiments (`--tick_rate_60`, `--tick_rate_half_step`): removed
   2026-10-25; `cull_emulated_build.ps1` deletes `src/tick_rate/`. Their findings are in
   "Tick rate experiments" in `docs/functions.md`.

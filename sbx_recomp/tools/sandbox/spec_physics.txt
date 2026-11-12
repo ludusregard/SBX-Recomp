@@ -1,0 +1,127 @@
+struct RigidBody 512
+0 uint8_t fixed            // Doesn't move (walls, the track).
+4 f32_be mass
+16 Vector unknown_16
+32 Vector velocity
+48 f32_be unknown_48
+64 Vector force            // Summed over a step.
+80 Vector rotation         // A quaternion.
+96 Vector angular_velocity
+128 Vector torque          // Summed over a step.
+144 Vector unknown_144
+160 Vector unknown_160
+176 Vector momentum        // The velocity times the mass.
+192 Vector unknown_192
+208 Vector position
+224 Matrix orientation
+288 Matrix transform
+352 Vector inertia
+368 Vector inverse_inertia
+400 Vector unknown_400
+480 Vector unknown_480
+496 Vector unknown_496
+end
+struct CollisionObject 320
+0 u32_be vtable
+32 CollisionShape shape
+160 Vector unknown_160 2
+208 Vector size
+264 u32_be unknown_264
+268 u32_be unknown_268
+304 Vector unknown_304
+end
+struct DrivetrainAxle 272
+0 f32_be values 68
+end
+struct CarData 1856
+0 Vector unknown_0
+32 Vector unknown_32 6
+128 f32_be handbrake_rate      // How fast the handbrake comes on, per second.
+132 f32_be unknown_132 2
+180 f32_be unknown_180
+264 f32_be unknown_264 2
+276 f32_be unknown_276 8
+316 f32_be unknown_316
+320 f32_be unknown_320
+324 f32_be unknown_324
+328 f32_be unknown_328
+332 f32_be unknown_332
+336 DrivetrainAxle axles 2
+880 f32_be unknown_880 96
+1264 f32_be reverse_throttle_rate
+1268 f32_be drivetrain 109   // The gearbox among it (Vehicle::SetGearValues).
+1704 Vector unknown_1704
+1720 f32_be unknown_1720 3
+1736 f32_be unknown_1736 3
+1748 f32_be unknown_1748
+1756 f32_be unknown_1756
+1760 Vector unknown_1760
+1776 Vector unknown_1776
+1792 f32_be unknown_1792 2
+1808 f32_be unknown_1808 3
+end
+struct Wheel 368
+0 Vector unknown_0
+16 uint8_t unknown_16 2
+20 u32_be unknown_20 5
+48 Vector unknown_48
+64 Vector unknown_64
+80 Vector position          // In the world.
+96 f32_be unknown_96
+100 f32_be unknown_100 3   // Not copied by Wheel::Copy.
+112 Vector unknown_112 3
+160 Vector unknown_160 2
+192 u32_be surface         // The kind of road under it.
+196 u32_be unknown_196
+200 f32_be surface_value_12   // From the surface's record (+12, +16, +20).
+204 f32_be surface_value_16
+208 u32_be unknown_208
+212 f32_be surface_value_20
+216 u32_be unknown_216 6
+240 uint8_t unknown_240 4
+244 u32_be unknown_244 23
+336 Vector unknown_336
+352 f32_be unknown_352 2
+360 f32_be unknown_360 2   // Not copied by Wheel::Copy.
+end
+struct VehicleDynamics 3376
+0 Vector unknown_0 3
+48 f32_be speed  // m/s
+64 Vector unknown_64
+96 Vector unknown_96 3
+272 ptr<CarData> car_data
+284 f32_be throttle         // 0.0 to 1.0, as the input sets them.
+288 f32_be reverse_throttle
+292 f32_be brake
+296 f32_be handbrake
+336 ptr<RigidBody> body
+340 ptr<CollisionObject> collision_object
+344 u32_be other_object     // An object with a virtual destructor; not worked out.
+352 Vector unknown_352 3
+400 Wheel wheels 4
+1888 Vector unknown_1888 6
+2016 Vector unknown_2016 6
+2224 f32_be unknown_2224
+2252 i32_be gear            // -1 reverse, 0 neutral, then the gears.
+2304 f32_be gear_value_2304
+2308 f32_be gear_value_2308
+2312 f32_be unknown_2312
+2320 f32_be unknown_2320
+2324 f32_be unknown_2324
+2328 f32_be unknown_2328
+2336 f32_be unknown_2336
+2352 f32_be step_length     // Seconds per physics step, and 1 over it.
+2356 f32_be step_rate
+2368 u32_be step_iterations
+2385 uint8_t unknown_2385
+2388 f32_be unknown_2388
+2396 f32_be unknown_2396
+2464 Vector unknown_2464 2
+2528 Vector unknown_2528 6
+2624 uint8_t unknown_2624
+2664 uint8_t has_surfaces
+2668 u32_be front_surfaces 32  // A surface's record, by its kind, for the front wheels.
+2796 u32_be rear_surfaces 32   // And for the rear ones.
+3168 Vector unknown_3168 4
+3248 Vector unknown_3248 8
+end

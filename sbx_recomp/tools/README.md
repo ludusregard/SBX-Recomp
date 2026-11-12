@@ -15,6 +15,7 @@ the sbxr_tools repo (https://github.com/ludusregard/sbxr_tools).
 | `match_pins.tsv` | yes (new) | Hand-checked matches `match_funcs.py` applies first. |
 | `port_addrs.py` | yes (new) | Ports function, code and data addresses (e.g. everything in ITC's `docs/functions.md`) using the matches. |
 | `port_native.py` | yes (new) | Rewrites another build's native C++ (ITC's `src/`) to SBX's addresses, for reading: rewrites every guest address through the matches and the data map, grades each (A exact to D unmatched), and summarizes per folder. See `docs/itc-parity.md`, "Phase 4". |
+| `native_gen/` | yes (new) | Tools for writing the game's code as our own C++: an index of the generated code, an instruction viewer, a symbolic runner, table and copy generators, and checks (call arguments, constants, float compares). See `native_gen/README.md`. |
 | `check_function_statuses.py` | yes | Checks the Status column of `docs/functions.md` against the overrides in `src/`; reports only. Run after changing either. |
 | `prune.py` | yes | Drops hints implicated in "Unresolved branch" sites. |
 | `pfm_to_png.py`, `rainbow_draws.py` | later | Read ITC's native renderer dumps; need that renderer ported. |

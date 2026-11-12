@@ -1,0 +1,59 @@
+struct GameObject {
+  u32_be vtable;
+  uint8_t unknown_4[12];
+  u32_be unknown_16;
+  u32_be unknown_20;
+  uint8_t unknown_24[8];
+  Vector points[14];
+  uint8_t unknown_256[16];
+  Vector points_272[4];
+};
+GUEST_SIZE(GameObject, 336);
+GUEST_OFFSET(GameObject, vtable, 0);
+GUEST_OFFSET(GameObject, points, 32);
+GUEST_OFFSET(GameObject, points_272, 272);
+
+struct GameObject384 {
+  GameObject object;
+  uint8_t unknown_336[16];
+  Vector unknown_352;
+  uint8_t unknown_368[16];
+};
+GUEST_SIZE(GameObject384, 384);
+GUEST_OFFSET(GameObject384, object, 0);
+
+struct GameObject1104 {
+  GameObject object;
+  uint8_t unknown_336[752];
+  Vector unknown_1088;
+};
+GUEST_SIZE(GameObject1104, 1104);
+GUEST_OFFSET(GameObject1104, object, 0);
+
+struct Buffer28 {
+  u32_be vtable;
+  uint8_t unknown_4[8];
+  i32_be unknown_12;
+  i32_be unknown_16;
+  u32_be block;  // 32 KB, freed by Buffer28::Free.
+  u32_be unknown_24;
+};
+GUEST_SIZE(Buffer28, 28);
+GUEST_OFFSET(Buffer28, vtable, 0);
+GUEST_OFFSET(Buffer28, block, 20);
+
+struct XprRef {
+  u32_be words[6];
+};
+GUEST_SIZE(XprRef, 24);
+GUEST_OFFSET(XprRef, words, 0);
+
+struct XprHolder {
+  u32_be unknown_0;
+  XprRef first;
+  u32_be unknown_28;
+  XprRef second;
+};
+GUEST_SIZE(XprHolder, 56);
+GUEST_OFFSET(XprHolder, first, 4);
+GUEST_OFFSET(XprHolder, second, 32);

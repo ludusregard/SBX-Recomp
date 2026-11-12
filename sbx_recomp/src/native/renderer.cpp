@@ -43,6 +43,10 @@ ITC_FLAG_INT32(native_renderer_show_resolve, -1, "SBX",
                "Show the frame's nth resolve destination in the native renderer's window "
                "instead of the main view (a debugging aid; -1 for the main view)");
 
+ITC_FLAG_BOOL(log_render_only_draws, false, "SBX",
+              "Log when a render-only frame (--subtick) draws a different number of draws "
+              "than the logic frame before it: what a screen records only during Update "
+              "(the menus' check, with --log_message_handlers to name the screen)");
 ITC_FLAG_BOOL(native_renderer_serialize, false, "SBX",
               "Wait for the GPU to finish each frame before recording the next (a "
               "debugging aid: rules out frames in flight sharing data)");
@@ -891,12 +895,34 @@ void Renderer::AfterCommand(uint8_t* base, uint32_t id, uint32_t payload, uint32
   }
 }
 
+// --log_render_only_draws: a render-only frame should draw what the logic
+// frame before it drew; logged once for each new pair of counts.
+void LogRenderOnlyDraws(uint32_t frame_draws) {
+  static uint32_t logic_draws = 0;
+  static uint32_t logged_logic = ~0u, logged_render_only = ~0u;
+  if (Renderer_ReplayingLogicList()) {
+    logic_draws = frame_draws;
+    return;
+  }
+  if (frame_draws == logic_draws ||
+      (logic_draws == logged_logic && frame_draws == logged_render_only)) {
+    return;
+  }
+  ITC_LOG_INFO("render-only frame: {} draws, the logic frame before it {}", frame_draws,
+               logic_draws);
+  logged_logic = logic_draws;
+  logged_render_only = frame_draws;
+}
+
 void Renderer::EndFrame() {
   commands_ += frame_commands_;
   draws_ += frame_draws_;
   uint32_t frame_draws = frame_draws_;
   uint32_t frame_commands = frame_commands_;
   frame_commands_ = frame_draws_ = 0;
+  if (ITC_FLAG(log_render_only_draws)) {
+    LogRenderOnlyDraws(frame_draws);
+  }
 
   VkCommandBuffer commands = BeginFrame();
   // A dump: the frame as is (with the resolves), then frames with something

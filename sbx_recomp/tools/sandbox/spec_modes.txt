@@ -1,0 +1,31 @@
+struct GameObject 336
+0 u32_be vtable
+16 u32_be unknown_16
+20 u32_be unknown_20
+32 Vector points 14
+272 Vector points_272 4
+end
+struct GameObject384 384
+0 GameObject object
+352 Vector unknown_352
+end
+struct GameObject1104 1104
+0 GameObject object
+1088 Vector unknown_1088
+end
+struct Buffer28 28
+0 u32_be vtable
+12 i32_be unknown_12
+16 i32_be unknown_16
+20 u32_be block        // 32 KB, freed by Buffer28::Free.
+24 u32_be unknown_24
+end
+struct XprRef 24
+0 u32_be words 6
+end
+struct XprHolder 56
+0 u32_be unknown_0
+4 XprRef first
+28 u32_be unknown_28
+32 XprRef second
+end

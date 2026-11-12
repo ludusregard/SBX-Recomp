@@ -32,7 +32,7 @@ renderer are taken only where they're renderer-agnostic in substance.
 | `hooks/title_screen.cpp` | `--skip_cutscenes`, `--attract_after_s`, `--log_boot_modes` | `82098DF0`, `820A4678`, `820AE840`, `82107D80` (exact), `8221FC48` (order 0.99; +36 and 600 checked); globals `0x8280DE3C`-`44` | Ported: `src/hooks/title_screen.cpp`. Changed from ITC: SBX's title screen plays its intro (Genki logos, warning) while it counts idle ticks, so the fast boot runs the title 590 ticks at once and then puts the idle count back to 0 (ITC kept the fast loop until the first race, which started the attract race straight away; with `--subtick` its load hung). `--log_boot_modes` also logs each handler set's state changes (`sub_82106410`) |
 | `hooks/create_file.cpp` | `--log_file_opens` | `82292F48` (exact) | Ported: `src/hooks/create_file.cpp` |
 | `hooks/voice.cpp` | Voice chat's 10 ms worker skipped (Xbox-only; CPU) | `825613F8` (order 0.87; the same code, checked) | Ported: `src/hooks/voice.cpp`, always on (no cvar) |
-| `hooks/lights.cpp` (`--native_nearest_lights`) | `Lights::FindNearest` natively: 13% of ITC's main thread | `820F3FF8` (calls 1.00; the same code but the w constant, `0x82000A20`) | Ported: `src/hooks/lights.cpp`, always on (no cvar) |
+| `game/lights.cpp` (`--native_nearest_lights`) | `Lights::FindNearest` natively: 13% of ITC's main thread | `820F3FF8` (calls 1.00; the same code but the w constant, `0x82000A20`) | Ported: `src/hooks/lights.cpp`, always on (no cvar) |
 | `hooks/cockpit_dials.cpp` (`--native_cockpit_dials`) | Needles posed each frame from the tick's gauges | `820E3EB0`, `820E4178` | Not needed: it fixes ITC's renderer-side blending; SBX blends in game logic, so the dials are already right (the user's call, 2026-10-24) |
 | The race-exit timer (new, not in ITC) | The forced exit waits for the screen fades (`sub_82166940` posts message 49 once the four fade counts at `0x82694DBC`/`0x82694DC4` are 0), and the fades (`Fade::Update`, `sub_8209D250`) step once a call of the per-frame logic `sub_82107A38`, from Draw: at 60 fps the exit came twice as soon and cut the race-end music | `sub_82107A38`, `sub_8209D250`, `sub_82166940`; found with `--find_race_exit_target` and `--log_boot_modes` (the exit is message 49, ~20 passes after the race-end message 34) | Fixed: `src/subtick/per_frame_logic.cpp` puts the fade counts (and a countdown at `0x825F180C`) back after render-only passes; the stopgap and the diagnostics used to find it removed (confirmed by the user, 2026-10-24) |
 
@@ -202,15 +202,37 @@ differs from ITC; `docs/functions.md`, "Native game code"):
   `native_texture_compression`, `native_save_interface`. `build_screen`
   has no flag (its functions are the build screen's lists and draws).
 
-Batches 3 to 6 tested in play (the user, 2026-11-09). Held: memory,
-std_list, std_string (ITC's heap); command_list, sprites, scene_target (the
-renderer); helpers (the kernel calls, Phase 3).
+Batches 3 to 6 tested in play (the user, 2026-11-09).
+
+The folders once held (2026-11-09: all are to come over, as ReXGlue is
+replaced piece by piece):
+
+- `std_list`, `std_string`: done over the recompiled operator new and
+  delete (`native_std_list`, `native_std_string`); ITC's run on its own
+  heap. Left: the wildcard search, erase, replace, append from a string.
+- `c_runtime`: the small functions done (`native_c_runtime`). Left: the
+  copies (memcpy, memset, memmove_s, XMemCpy, XMemSet: memcpy is wrapped by
+  the native renderer, which records writes into the physical views, so
+  these go together with it), strcpy_s, strtoxl, mbtowc, the formatters
+  and parsers (`_output_l`, `_woutput_l`, `__strgtold12_l`: 1,400 to 1,800
+  instructions each), the math kernels, the exit list and start-up.
+- `memory`: ITC's is a new allocator (one guest range reserved from the
+  SDK's virtual heap, first fit, block sizes kept on the host; physical
+  memory from the SDK's physical heaps), with malloc, operator new and the
+  rest as thin calls into it. Ours is to be written the same way, as its
+  own step: every allocation in the game goes through it, so it gets a
+  flag of its own and a run with it off for comparison.
+- `helpers` (GetTickCount, QueryPerformanceCounter, CompareStringA,
+  lstrcmpA): with the kernel calls.
+- `command_list`, `sprites`: no functions of their own in ITC (layouts
+  the other folders use). `scene_target`: five recording functions
+  (SceneTarget::RecordPasses is 1,300 instructions), with the frame passes.
 
 Where ITC's folders cover an address SBX already overrides, SBX's override
 stays and is the base. Each of the seven is a wrapper around the
 recompiled function (it watches, logs or reorders the call); ITC's version
 of each is the function's own work as C++ and adds no behavior of its own
-(read 2026-11-09). Merged so far, the wrapper calling our C++
+(read 2026-11-09). All seven are merged, the wrapper calling our C++
 (`src/hooks/native_calls.h`) in place of the recompiled function, under its
 subsystem's flag:
 
@@ -219,14 +241,33 @@ subsystem's flag:
 | `sub_82106410` StateMachine::Handle | `title_screen.cpp` (boot mode log, autosave) | `game_modes.cpp`, `native_game_modes` | `game_modes.cpp` |
 | `sub_8220F7B0` RivalLogo::Draw | `subtick/per_frame_logic.cpp` (the logo on render-only passes) | `race_hud.cpp`, `native_race_hud` | `race_hud.cpp` |
 | `sub_820F1038` TextureAnimations::Advance | `subtick/per_frame_logic.cpp` (skipped on render-only passes) | `course_scenery.cpp`, `native_course_scenery` | `course_scenery.cpp` |
-| `sub_82113FB0` Progress::SetDefaults | `unlock_cut_cars.cpp` (after it) | not yet | `save_data.cpp`: its three table copies through ITC's memcpy, the bits |
-| `sub_8228CEE8` GameData::Save | `autosave.cpp` (its log) | not yet | `save_layer.cpp`: the name's swprintf, the save request, on ITC's save layer |
-| `sub_8211D4B8` UiMovie::Update | subtick (the movies' adds once a tick) | not yet | `ui_movies/update.cpp`: the queue and time steps |
-| `sub_82585C40` UiMovie::ApplyTrack | subtick (the same) | not yet | `ui_movies/keys.cpp`: the keys' interpolation, float for float |
+| `sub_82113FB0` SaveData::NewGame | `unlock_cut_cars.cpp` (after it) | `save_data.cpp`, `native_save_data` (the copies through the game's memcpy) | `save_data.cpp`: its three table copies through ITC's memcpy, the bits |
+| `sub_8228CEE8` SaveGame::Write | `autosave.cpp` (its log) | `save_interface.cpp`, `native_save_interface` (swprintf and the save request recompiled) | `save_layer.cpp`: the name's swprintf, the save request, on ITC's save layer |
+| `sub_8211D4B8` UiMovie::Update | subtick (the movies' adds once a tick) | `ui_movies.cpp`, `native_ui_movies` | `ui_movies/update.cpp`: the queue and time steps |
+| `sub_82585C40` UiMovie::ApplyTrack | subtick (the same) | `ui_movies.cpp`, `native_ui_movies` | `ui_movies/keys.cpp`: the keys' interpolation, float for float |
 
-The last four go with their subsystems' per-tick work (the UI movies) or
-ITC's layers SBX doesn't have yet (its save layer, its C runtime's
-swprintf).
+Where ITC's version runs on a layer SBX doesn't have (its memcpy, its save
+layer, its C runtime's swprintf), ours calls the recompiled function for
+that part.
+
+### Where the two games' code differs (the user, 2026-11-09)
+
+ITC is the US release of the same game, and some of its game code isn't
+SBX's. These are ITC's own; none of it is brought over, and a function
+graded B or C in these parts is expected to differ:
+
+- A camera shake of ITC's own.
+- Reverse is "hold the brake to reverse", not a control of its own.
+- Post-process filters picked at random on the demo replay's camera cuts.
+- The ticker text's limit (the garage menu's scrolling text) is longer.
+- The font has an entry for an accented e.
+- No speed cameras (SBX has them).
+- Miles an hour, where SBX has kilometers an hour.
+- License plates: US style, one 7-character text, where SBX has Japanese
+  plates. The saves differ for this (the two games' saves aren't the same
+  layout).
+
+Game data differences aside, those are the ones known in the code.
 
 ### Brought over, then taken out (2026-11-09)
 

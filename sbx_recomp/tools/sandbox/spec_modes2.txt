@@ -1,0 +1,39 @@
+struct Member13360 43520
+0 GameObject object
+360 i32_be unknown_360
+384 Vector unknown_384 3
+448 u32_be unknown_448
+452 u32_be unknown_452
+43016 Buffer28 buffers 4
+43136 GameObject384 unknown_43136
+end
+struct Member56896 10836
+0 GameObject object
+10780 XprHolder xprs
+end
+struct Entry20 20
+0 u32_be words 5
+end
+struct Member67760 760
+0 GameObject object
+352 FixedList<16,Entry20> list
+748 u32_be unknown_748
+752 u32_be unknown_752
+756 u32_be unknown_756
+end
+struct Block1104 1104
+1088 Vector unknown_1088
+end
+struct RaceModeMember 77376
+0 u32_be vtable
+16 StateMachine machine
+9648 GameObject1104 unknown_9648 2
+11856 GameObject1104 unknown_11856
+12976 GameObject384 unknown_12976
+13360 Member13360 unknown_13360
+56880 Member56896 unknown_56880
+67744 Member67760 unknown_67744
+68512 Block1104 unknown_68512 8
+77360 i32_be unknown_77360
+77364 u32_be unknown_77364 3
+end

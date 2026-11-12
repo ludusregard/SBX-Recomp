@@ -56,6 +56,18 @@ void CarTransforms_DrawStepEnd();
 // holds the blend written for the last frame.
 void CarTransforms_EndFrame(uint8_t* base);
 
+// True if the camera pass at address holds this frame's blend: built from it
+// on this main loop pass (by the Update message, or by
+// CarTransforms_RebuildCamera on a render-only pass), and its eye, target, up
+// and roll still the blend (no other view has rebuilt it since). The race
+// overlays keep such a pass as it is when they record (per_frame_logic.cpp).
+bool CarTransforms_HoldsFrameCamera(uint8_t* base, uint32_t address);
+
+// Around a garage stage step in the menus (per_frame_logic.cpp): the camera
+// passes it updates are blended between ticks, as in a race.
+void CarTransforms_MenuStageBegin();
+void CarTransforms_MenuStageEnd();
+
 // For the CameraPass::Update wrapper: r3 = the camera pass.
 bool CarTransforms_CameraEnabled();
 void CarTransforms_CameraBegin(uint8_t* base, uint32_t address);
